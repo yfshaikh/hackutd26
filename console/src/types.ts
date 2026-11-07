@@ -1,0 +1,232 @@
+// Shared contract between the console and the command-center backend.
+// The backend must send exactly these JSON shapes. See ../API.md.
+
+export type ISODate = string;
+
+export type Severity = "info" | "low" | "medium" | "high" | "critical";
+
+/** Winstead "scope definitions": every protected asset is in exactly one of these. */
+export type AssetStatus =
+  | "clean"
+  | "investigating"
+  | "exfiltrated"
+  | "encrypted"
+  | "contained";
+
+export type AssetKind = "model-weights" | "volume" | "job" | "pod" | "node";
+
+export interface Asset {
+  id: string;
+  name: string;
+  kind: AssetKind;
+  /** Plain-language description of what this is to the law firm. */
+  description: string;
+  /** Kubernetes object this maps to, e.g. "pvc/client-docs". */
+  ref: string;
+  status: AssetStatus;
+  statusSince: ISODate;
+  /** Why it has this status, e.g. "2.9 of 4.2 GiB left the cluster". */
+  note?: string;
+}
+
+export type Health = "healthy" | "degraded" | "critical" | "unreachable";
+
+export interface Gpu {
+  index: number;
+  model: string;
+  /** 0-100 */
+  utilization: number;
+  memUsedGiB: number;
+  memTotalGiB: number;
+  tempC: number;
+  /** A fault we inject rather than cause on real hardware (ECC, Xid). Shown as "simulated". */
+  simulatedFault?: string;
+}
+
+export interface ClusterNode {
+  name: string;
+  role: "control-plane" | "gpu-worker";
+  health: Health;
+  cordoned: boolean;
+  gpus: Gpu[];
+  cpuPct: number;
+}
+
+export type PodOwner = "law-firm" | "platform" | "unknown";
+
+export interface Pod {
+  name: string;
+  namespace: string;
+  node: string;
+  phase: "Running" | "Pending" | "Terminating" | "Succeeded" | "Failed";
+  owner: PodOwner;
+  usesGpu: boolean;
+  health: Health;
+  /** Isolated by a deny-all NetworkPolicy. */
+  quarantined: boolean;
+  /** Short reason shown under the pod, e.g. "miner process killed". */
+  note?: string;
+}
+
+export interface Cluster {
+  name: string;
+  nodes: ClusterNode[];
+  pods: Pod[];
+  /** Time-series of total GPU utilization for the sparkline, oldest first. */
+  gpuHistory: number[];
+}
+
+export type Autonomy =
+  | { mode: "autonomous"; reason: string }
+  | { mode: "needs-approval"; reason: string; approvalId: string };
+
+export type TimelineKind = "attack" | "agent" | "human" | "system";
+
+export interface TimelineEntry {
+  id: string;
+  ts: ISODate;
+  kind: TimelineKind;
+  /** "Attacker", "Sentinel (Nemotron)", "Dana Ortiz", "System". */
+  actor: string;
+  text: string;
+  severity?: Severity;
+  /** Only on agent actions: whether it ran on its own and the policy reason. */
+  autonomy?: Autonomy;
+  /** The concrete tool call, e.g. "kubectl delete pod xmrig-7f9c -n research". */
+  tool?: string;
+  /** Where it happened: a node name or a pod name. The 3D floor flashes it. */
+  target?: string;
+  // --- Expandable detail (agent actions carry the first four; attack events the last) ---
+  /** Full tool-call arguments the agent used. */
+  toolArgs?: Record<string, unknown>;
+  /** Full result the tool returned. */
+  toolResult?: string;
+  /** Nemotron's reasoning / message text for the round that produced this action. */
+  reasoning?: string;
+  /** Relevant pod logs captured around the action. */
+  podLogs?: string;
+  /** The attacker's own transcript lines that caused this attack event. */
+  transcript?: { ts: string; kind: string; text: string }[];
+}
+
+export type ApprovalStatus = "pending" | "approved" | "denied";
+
+export interface Approval {
+  id: string;
+  requestedAt: ISODate;
+  requestedBy: string;
+  /** Imperative, e.g. "Cordon node gpu-node-1". */
+  action: string;
+  target: string;
+  /** Why the agent wants it. */
+  rationale: string;
+  /** Why policy needs a human, e.g. "touches legitimate work". */
+  policyReason: string;
+  /** What happens if approved, in one line. */
+  impact: string;
+  status: ApprovalStatus;
+  decidedBy?: string;
+  decidedAt?: ISODate;
+}
+
+/** NIST SP 800-61 lifecycle phases. */
+export type IncidentPhase =
+  | "preparation"
+  | "detection"
+  | "containment"
+  | "eradication"
+  | "recovery"
+  | "post-incident";
+
+export type IncidentStatus = "monitoring" | "open" | "contained" | "resolved";
+
+export interface RecordAction {
+  ts: ISODate;
+  by: string;
+  text: string;
+}
+
+/** Incident record, NIST SP 800-61-style fields. */
+export interface IncidentRecord {
+  id: string;
+  title: string;
+  status: IncidentStatus;
+  phase: IncidentPhase;
+  detectedAt?: ISODate;
+  reportedBy?: string;
+  categories: string[];
+  severity: Severity;
+  /** Attack vector / initial access, once known. */
+  vector?: string;
+  affectedSystems: string[];
+  actionsTaken: RecordAction[];
+  nextSteps: string[];
+  /** Set when client data leaves: when notification is due. */
+  notificationDueAt?: ISODate;
+  updatedAt: ISODate;
+}
+
+export type Role = "admin" | "responder" | "viewer";
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  createdAt: ISODate;
+}
+
+export type AttackStepId = "gain-access" | "start-miner" | "steal-weights" | "persistence";
+
+export interface AttackStep {
+  id: AttackStepId;
+  label: string;
+  description: string;
+  /** "locked" until the previous step has run. */
+  status: "locked" | "ready" | "running" | "done";
+}
+
+/** Whole-dashboard state. The backend sends one on connect and after reset. */
+export interface Snapshot {
+  firm: string;
+  cluster: Cluster;
+  assets: Asset[];
+  timeline: TimelineEntry[];
+  approvals: Approval[];
+  /** null until the first detection opens an incident. */
+  record: IncidentRecord | null;
+  attack: AttackStep[];
+}
+
+/** Everything the server can push. Each one replaces the item with the same key. */
+export type ServerEvent =
+  | { type: "snapshot"; snapshot: Snapshot }
+  | { type: "timeline"; entry: TimelineEntry }
+  | { type: "asset"; asset: Asset }
+  | { type: "approval"; approval: Approval }
+  | { type: "record"; record: IncidentRecord | null }
+  | { type: "cluster"; cluster: Cluster }
+  | { type: "attack"; attack: AttackStep[] };
+
+export type ConnectionState = "connecting" | "live" | "lost";
+
+/** Response to POST /attack/<step> and POST /reset. */
+export interface AttackResult {
+  ok: boolean;
+  step: AttackStepId | "reset";
+  /** One human sentence, e.g. "Miner pod started on gpu-node-1". */
+  message: string;
+  /** Raw command output, shown verbatim. */
+  output?: string;
+  attack: AttackStep[];
+}
+
+export interface NewUser {
+  name: string;
+  email: string;
+  role: Role;
+}
+
+export interface Session {
+  user: User;
+}

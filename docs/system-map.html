@@ -1,0 +1,510 @@
+<title>HackUTD26 System Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one drill-down card. The box diagram fills the left, a detail panel sits on the right; clicking a pod swaps the diagram for that pod's own. Secondary info folds away below. */
+:root {
+  --bg: #eef1f4; --panel: #ffffff; --ink: #18202c; --muted: #5a6577; --line: #c9d0da;
+  --accent: #2f5bd3; --defend: #0f8a7e; --attack: #c2410c; --attack-soft: #fbe9df;
+  --done: #1f8a4c; --doing: #b7791f; --todo: #8a94a6;
+  --zone: #e3e8ef; --zone2: #d8dfe9; --zone-ink: #3c4657;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121820; --panel: #1a222d; --ink: #e4e9f0; --muted: #98a3b5; --line: #334155;
+  --accent: #7d9cff; --defend: #3cc3b4; --attack: #f08a52; --attack-soft: #3a2418;
+  --done: #4cc47f; --doing: #e0a744; --todo: #7c879a;
+  --zone: #1f2935; --zone2: #263241; --zone-ink: #b6c0cf; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #121820; --panel: #1a222d; --ink: #e4e9f0; --muted: #98a3b5; --line: #334155;
+  --accent: #7d9cff; --defend: #3cc3b4; --attack: #f08a52; --attack-soft: #3a2418;
+  --done: #4cc47f; --doing: #e0a744; --todo: #7c879a;
+  --zone: #1f2935; --zone2: #263241; --zone-ink: #b6c0cf; color-scheme: dark; }
+
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; padding-bottom: 14px; }
+h1 { font: 600 28px/1.1 var(--display); margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 70ch; }
+.meter { min-width: 220px; flex: 0 1 280px; }
+.meter-row { display: flex; justify-content: space-between; gap: 12px; font: 500 13px var(--mono); color: var(--muted); }
+.bar { height: 8px; background: var(--zone); border-radius: 4px; overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; background: var(--done); }
+h2 { font: 600 20px/1.2 var(--display); margin: 0 0 6px; text-wrap: balance; }
+h3 { font: 600 15px/1.3 var(--body); margin: 14px 0 4px; }
+p { margin: 0 0 8px; max-width: 68ch; }
+code { font: 12.5px var(--mono); background: var(--zone); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+button { font: 500 14px var(--body); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:focus-visible, .node:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* main card */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.bar-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.crumbs { font: 500 14px var(--mono); color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.crumbs a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.crumbs b { color: var(--ink); font-weight: 500; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+@media (max-width: 1100px) { .main { grid-template-columns: minmax(0, 1fr); } .panel { border-left: 0 !important; border-top: 1px solid var(--line); } }
+.diagram { overflow-x: auto; padding: 12px; min-width: 0; }
+.diagram svg { display: block; width: 100%; height: auto; min-width: 760px; }
+.panel { border-left: 1px solid var(--line); padding: 16px 18px; min-width: 0; }
+.panel .kind { font: 500 12px var(--mono); color: var(--muted); }
+.panel ol, .panel ul { margin: 6px 0 10px; padding-left: 20px; }
+.panel li { margin: 3px 0; }
+.code-ref { margin-top: 12px; padding: 10px 12px; background: var(--zone); border-radius: 6px; font-size: 13.5px; }
+.code-ref strong { display: block; font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 2px; }
+.code-ref div + div { margin-top: 4px; }
+.hint { font-size: 13px; color: var(--muted); }
+
+/* step strip */
+.strip { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line); }
+.strip .lbl { font: 600 13px var(--body); color: var(--muted); margin-right: 4px; }
+.strip button[aria-pressed="true"].atk { background: var(--attack); border-color: var(--attack); color: #fff; }
+.strip button[aria-pressed="true"].def { background: var(--defend); border-color: var(--defend); color: #fff; }
+.strip button.atk { border-color: var(--attack); color: var(--attack); }
+.strip button.def { border-color: var(--defend); color: var(--defend); }
+.strip .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+
+/* svg */
+svg text { font-family: var(--body); }
+.g-zone { fill: var(--zone); }
+.g-zone2 { fill: var(--zone2); }
+.g-zlabel { fill: var(--zone-ink); font: 600 12px var(--body); letter-spacing: .03em; }
+.g-atkzone { fill: var(--attack-soft); stroke: var(--attack); stroke-dasharray: 4 4; stroke-width: 1; }
+.g-atklabel { fill: var(--attack); font: 600 11.5px var(--body); }
+.node rect.b { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.node.click { cursor: pointer; }
+.node.click:hover rect.b { stroke: var(--accent); stroke-width: 2; }
+.node .t { fill: var(--ink); font: 600 13px var(--body); }
+.node .s { fill: var(--muted); font: 11.5px var(--body); }
+.node.atk rect.b { stroke: var(--attack); stroke-dasharray: 5 3; }
+.node.atk .t { fill: var(--attack); }
+.node.gpu rect.b { fill: var(--zone2); }
+.dim .node:not(.on) { opacity: .3; }
+.dim .wire:not(.on), .dim .wlabel:not(.on) { opacity: .3; }
+.node.on rect.b { stroke-width: 3; stroke-dasharray: none; }
+.mode-atk .node.on rect.b { stroke: var(--attack); }
+.mode-def .node.on rect.b { stroke: var(--defend); }
+[hidden] { display: none !important; }
+.badge circle { stroke: var(--panel); stroke-width: 2; }
+.mode-atk .badge circle { fill: var(--attack); } .mode-def .badge circle { fill: var(--defend); }
+.badge text { fill: #fff; font: 600 11px var(--body); text-anchor: middle; }
+.wire { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.wire.tail { stroke: var(--accent); stroke-dasharray: 6 4; }
+.wlabel { fill: var(--muted); font: 500 11px var(--mono); }
+.arrow { fill: var(--muted); }
+/* pod view */
+.p-col { fill: var(--muted); font: 600 12px var(--body); }
+.p-cont { fill: var(--zone); stroke: var(--line); }
+.p-cont.atk { fill: var(--attack-soft); stroke: var(--attack); stroke-dasharray: 5 3; }
+.p-head { fill: var(--ink); font: 600 15px var(--body); }
+.p-img { fill: var(--muted); font: 11.5px var(--mono); }
+.p-step rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+.p-step .n { fill: var(--accent); font: 600 12px var(--mono); }
+.p-step text { fill: var(--ink); font: 12.5px var(--body); }
+.p-io rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+.p-io.warn rect { stroke: var(--attack); stroke-width: 2; }
+.p-io .k { fill: var(--muted); font: 600 11px var(--body); letter-spacing: .02em; }
+.p-io text { fill: var(--ink); font: 12px var(--body); }
+
+/* secondary */
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-top: 12px; }
+summary { cursor: pointer; padding: 12px 16px; font: 600 15px var(--body); }
+details > div { padding: 0 16px 16px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.cols > div { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.cols a { color: var(--accent); }
+.phase { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.phase-head { display: flex; justify-content: space-between; gap: 12px; }
+.phase ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
+.phase li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 6px; font-size: 14px; }
+.mark.done { color: var(--done); } .mark.doing { color: var(--doing); } .mark.todo { color: var(--todo); }
+.mono { font-family: var(--mono); }
+@media (prefers-reduced-motion: no-preference) { .node rect.b, .node { transition: opacity .2s, stroke .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>HackUTD26 System Map</h1>
+      <p class="sub">One rented GPU box runs a law firm's AI workloads on Kubernetes. An attacker breaks in through an exposed notebook, and Nemotron agents on your Mac fight back. Click anything to go deeper.</p>
+    </div>
+    <div class="meter" aria-label="Overall progress">
+      <div class="meter-row"><span>Progress to demo</span><span id="pct">0%</span></div>
+      <div class="bar"><i id="pctbar" style="width:0"></i></div>
+      <div class="meter-row" style="margin-top:6px"><span id="phaseNow"></span></div>
+    </div>
+  </header>
+
+  <section class="card" aria-label="System drill-down">
+    <div class="bar-top">
+      <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
+      <button id="back" hidden>Back to the box</button>
+    </div>
+    <div class="main">
+      <div class="diagram" id="diagram"></div>
+      <aside class="panel" id="panel" aria-live="polite"></aside>
+    </div>
+    <div class="strip" id="strip" role="group" aria-label="Highlight a flow on the box">
+      <span class="lbl">Attack</span>
+      <button class="atk" data-flow="a1" aria-pressed="false">1 Gain access</button>
+      <button class="atk" data-flow="a2" aria-pressed="false">2 Start miner</button>
+      <button class="atk" data-flow="a3" aria-pressed="false">3 Steal weights</button>
+      <button class="atk" data-flow="a4" aria-pressed="false">4 Persistence</button>
+      <span class="sep"></span>
+      <button class="def" data-flow="def" aria-pressed="false">Defender response</button>
+    </div>
+  </section>
+
+  <details>
+    <summary>How your Mac reaches the box</summary>
+    <div>
+      <p>Your Mac and the box are both on your Tailscale network, a private encrypted link. The box's address there is <code>100.106.83.89</code>. Nothing on the box is open to the public internet.</p>
+      <div class="cols">
+        <div><h3>kubectl and the backend</h3><p>Talk to the k3s API at <code>100.106.83.89:6443</code> using <code>~/.kube/hackutd.yaml</code>.</p></div>
+        <div><h3>The attacker laptop</h3><p>Reaches the "exposed" Jupyter at <code>100.106.83.89:8888</code>. For safety, the tailnet stands in for the internet.</p></div>
+        <div><h3>SSH (setup only)</h3><p>Brev's gateway is flaky, so SSH over Tailscale: <code>ssh -o HostName=100.106.83.89 -o Port=22 -o ProxyCommand=none hackutd-gpu</code></p></div>
+      </div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Real attacks this is based on</summary>
+    <div class="cols" id="real"></div>
+  </details>
+
+  <details>
+    <summary>Progress</summary>
+    <div id="phases"></div>
+  </details>
+</div>
+
+<script>
+// ---------- data: every box on the level-0 diagram ----------
+// pod:true => clicking drills into a pod diagram. files => "See the code".
+const N = {
+  cc:      { t: "Command center", s: "backend + dashboard", kind: "Your Mac",
+             what: "The defender side. The backend watches the cluster, runs the Nemotron agents, and serves the dashboard you look at.",
+             why: "It runs off the box on purpose, so the attacker can't kill it (Winstead's \"isolated\" requirement).",
+             files: ["backend/app/main.py (API and loops)", "backend/app/defender.py (detection and agent)", "console/ (the dashboard)"] },
+  atklap:  { t: "Attacker laptop", s: "attacker app :5180", kind: "Your Mac",
+             what: "The attacker's terminal. Each button sends real Python to the exposed Jupyter, and the terminal shows exactly what ran.",
+             why: "Lets judges play the attacker. It runs on your Mac, but the commands execute inside the cluster.",
+             files: ["backend/app/attacks.py (the 4 steps)", "backend/app/jupyter.py (talks to Jupyter)", "attacker/ (the 3D laptop app)"] },
+  nemo:    { t: "Nemotron 3 Ultra", s: "via OpenRouter (HTTPS)", kind: "NVIDIA model",
+             what: "The language model the defender asks: \"here's what we found, which tool do you call?\" It answers with tool calls such as delete_pod.",
+             why: "The reasoning layer. Code still checks every call against the autonomy policy before it runs.",
+             files: ["backend/app/defender.py: run_agent()", "backend/app/config.py: NEMOTRON_MODEL"] },
+  vm:      { t: "Brev VM", kind: "The box",
+             what: "An AWS g4dn.xlarge virtual machine rented through Brev: 4 CPUs, 16 GB RAM, and one NVIDIA Tesla T4 GPU attached.",
+             why: "Pods can only use a GPU on the machine it's plugged into, so the whole cluster lives here." , files: ["README.md (Set up from scratch)"] },
+  api:     { t: "k3s API server", s: ":6443 · the one front door", kind: "Inside k3s",
+             what: "k3s is Kubernetes, installed directly on the VM as one program. Every request goes through this API: kubectl, the backend, the defender, and the attacker's stolen token.",
+             why: "Whoever holds a valid token can ask it to create pods. That's why the stolen notebook token matters.",
+             files: ["README.md (k3s install command)", "~/.kube/hackutd.yaml (your Mac's admin login; never share it)"] },
+  gpu:     { t: "Tesla T4 GPU", s: "16 GB · shared as 8 time-slices", kind: "Hardware",
+             what: "The real GPU. The NVIDIA device plugin advertises it to Kubernetes as 8 slices (nvidia.com/gpu: 8), so several pods share it by taking turns.",
+             why: "Sharing is what lets the attacker's miner steal GPU time from the law firm's jobs.",
+             files: ["deploy/00-gpu-plugin.yaml (time-slicing config)"] },
+  ms:      { t: "model-server", s: "GPU · :8080", ns: "lawfirm", pod: true },
+  train:   { t: "training", s: "GPU · fine-tuning", ns: "lawfirm", pod: true },
+  nb:      { t: "notebook", s: "Jupyter, no login", ns: "lawfirm", pod: true },
+  disk:    { t: "model-weights", s: "disk · 288 MiB file", ns: "lawfirm", pod: true },
+  miner:   { t: "miner pod", s: "GPU · kube-sync", ns: "lawfirm", pod: true, atk: true },
+  exfil:   { t: "exfil pod", s: "data-sync-…", ns: "lawfirm", pod: true, atk: true },
+  cron:    { t: "CronJob", s: "log-rotate", ns: "lawfirm", pod: true, atk: true },
+  tele:    { t: "gpu-telemetry", s: "GPU · nvidia-smi", ns: "platform", pod: true },
+  edge:    { t: "notebook-edge", s: "exposes Jupyter :8888", ns: "platform", pod: true },
+  drop:    { t: "drop", s: "attacker's server", ns: "drop-site", pod: true },
+  plugin:  { t: "nvidia device plugin", s: "advertises the GPU", ns: "kube-system", pod: true },
+};
+
+// ---------- data: each pod's own diagram ----------
+// steps: what the process does, in order. ins/outs: [label, text, warn?]
+const PODS = {
+  ms: { image: "pytorch/pytorch:2.5.1-cuda12.4", container: "server",
+    steps: [["Load contracts-ft-v3.pt from /weights", "(creates it on the very first start)"], ["Put a 6-layer transformer on the GPU", "load_state_dict(…, weights_only=True)"], ["Inference loop: one batch every 0.4 s", "stands in for client queries"], ["HTTP server on :8080", "answers health checks"]],
+    ins: [["DISK", "model-weights → /weights"], ["GPU", "1 of the 8 time-slices"], ["IDENTITY", "none (no token mounted)"]],
+    outs: [["NETWORK", "port 8080, inside the cluster"], ["GPU LOAD", "steady, light"]],
+    what: "The law firm's AI model: a transformer fine-tuned on client contracts, which the firm serves to its lawyers. Its weights file is the thing the attacker wants to steal.",
+    files: ["deploy/10-lawfirm.yaml: Deployment model-server", "deploy/10-lawfirm.yaml: ConfigMap workload-scripts → model_server.py"] },
+  train: { image: "pytorch/pytorch:2.5.1-cuda12.4", container: "train",
+    steps: [["Build a small network (2048→4096→2048)", ""], ["Batch of 256: forward + backward", ""], ["AdamW update, then sleep 0.05 s", "paced so it shares the GPU"], ["Print the loss every 200 steps", "see it with kubectl logs"]],
+    ins: [["GPU", "1 of the 8 time-slices"], ["SCRIPT", "ConfigMap → /scripts/train.py"], ["IDENTITY", "none (no token mounted)"]],
+    outs: [["LOGS", "step N loss X"], ["GPU LOAD", "moderate"]],
+    what: "A fine-tuning job the firm keeps running. It's a victim of the miner: when the miner hogs the GPU, this job slows down.",
+    files: ["deploy/10-lawfirm.yaml: Deployment training", "deploy/10-lawfirm.yaml: ConfigMap workload-scripts → train.py"] },
+  nb: { image: "pytorch/pytorch + jupyterlab", container: "notebook",
+    steps: [["pip install jupyterlab at start", "takes about 60–90 s"], ["JupyterLab on :8888", "token '' and password '' (no login)"], ["Runs any code sent to a kernel", "remote code execution, by design"]],
+    ins: [["NETWORK", "Service notebook :8888 ← notebook-edge"], ["TOKEN FILE", "auto-mounted ServiceAccount token", true], ["IDENTITY", "ServiceAccount notebook", true]],
+    outs: [["K8S API", "may create/delete pods and cronjobs", true], ["GPU", "none requested"]],
+    what: "A data scientist's notebook. Two mistakes make it the way in: anyone who reaches it can run code, and Kubernetes put a token in it whose Role (notebook-dev) can create pods and cronjobs.",
+    files: ["deploy/10-lawfirm.yaml: Deployment notebook (Jupyter flags)", "deploy/10-lawfirm.yaml: ServiceAccount notebook, Role + RoleBinding notebook-dev (the over-grant)"] },
+  disk: { image: "PersistentVolumeClaim · local-path", container: "model-weights", kindLabel: "Disk",
+    steps: [["A folder on the VM's disk, provisioned by k3s", "storageClassName: local-path"], ["Holds contracts-ft-v3.pt", "302,335,262 bytes (288 MiB)"], ["Survives pod restarts", "unlike a container's own files"]],
+    ins: [["WRITTEN BY", "model-server (first start)"]],
+    outs: [["READ BY", "model-server, mounted at /weights"], ["READ BY ATTACKER", "exfil pod, read-only mount", true]],
+    what: "The disk that holds the firm's model weights. Any pod in the namespace that mounts it can read it, which is exactly what the attacker's exfil pod does.",
+    files: ["deploy/10-lawfirm.yaml: PersistentVolumeClaim model-weights"] },
+  miner: { image: "pytorch/pytorch:2.5.1-cuda12.4", container: "sync (process: xmrig)", atk: true,
+    steps: [["Put two 4096×4096 matrices on the GPU", ""], ["Multiply them forever, no pause", "a tight loop that hogs its slice"], ["Print progress every 200 iterations", "process title faked as xmrig"]],
+    ins: [["CREATED BY", "notebook's stolen token via the API", true], ["GPU", "1 of the 8 time-slices"], ["IDENTITY", "none (token not mounted)"]],
+    outs: [["BURNS", "T4 to 100% utilization", true], ["HURTS", "model-server and training slow down", true]],
+    what: "The cryptojacking stand-in. It looks like a miner (named xmrig, no owner label) and burns the GPU like one. It's PyTorch matrix math, never real mining software.",
+    files: ["backend/app/attacks.py: _MINER_PY, _miner_pod_body(), start_miner()"] },
+  exfil: { image: "pytorch/pytorch:2.5.1-cuda12.4", container: "sync", atk: true,
+    steps: [["Mount model-weights read-only at /weights", ""], ["Read contracts-ft-v3.pt into memory", "288 MiB"], ["HTTP PUT it to drop.drop-site.svc", "302,335,262 bytes sent"]],
+    ins: [["CREATED BY", "notebook's stolen token via the API", true], ["DISK", "model-weights (read-only)", true]],
+    outs: [["STEALS", "the firm's model weights → drop", true]],
+    what: "The theft. The stolen token is allowed to create pods, so the attacker creates one that mounts the weights disk and uploads the file.",
+    files: ["backend/app/attacks.py: _EXFIL_PY, _exfil_pod_body(), steal_weights()"] },
+  cron: { image: "batch/v1 CronJob", container: "log-rotate", atk: true, kindLabel: "CronJob",
+    steps: [["Schedule: */1 * * * *", "every minute"], ["Start a Job whose pod runs the miner loop", "requests 1 GPU slice"], ["Repeat until someone deletes the CronJob", "deleting the pod alone isn't enough"]],
+    ins: [["CREATED BY", "notebook's stolen token via the API", true]],
+    outs: [["RESPAWNS", "a new miner pod every minute", true]],
+    what: "Persistence. Even if the defender kills the miner, this brings it back. Its name makes it look like routine log cleanup.",
+    files: ["backend/app/attacks.py: _cronjob_body(), persistence()"] },
+  tele: { image: "nvidia/cuda:12.4.1-base-ubuntu22.04", container: "smi",
+    steps: [["Sleeps forever", "it just needs to exist with GPU access"], ["Backend runs nvidia-smi inside it every 2 s", "through the k3s API (exec)"], ["Returns utilization, memory, temperature", ""]],
+    ins: [["GPU", "1 of the 8 time-slices"], ["EXEC", "from the backend via the API"]],
+    outs: [["TELEMETRY", "GPU numbers for the dashboard and detection"]],
+    what: "The defender's eyes on the GPU. A spike that no law-firm pod explains is one of the detection signals.",
+    files: ["deploy/10-lawfirm.yaml: DaemonSet gpu-telemetry", "backend/app/cluster.py (runs nvidia-smi)"] },
+  edge: { image: "alpine/socat:1.8.0.0", container: "socat",
+    steps: [["Listen on 100.106.83.89:8888 only", "the Tailscale address, never public"], ["Forward each connection to notebook :8888", "notebook.lawfirm.svc"]],
+    ins: [["FROM", "the tailnet (stands in for the internet)"]],
+    outs: [["TO", "notebook Service :8888"]],
+    what: "Makes the notebook \"exposed to the network\" like a real misconfigured one, but only on your private Tailscale network, for safety.",
+    files: ["deploy/15-notebook-edge.yaml"] },
+  drop: { image: "python:3.12-slim", container: "drop",
+    steps: [["HTTP server on :8000 (Service port 80)", ""], ["Save each PUT to /loot", ""], ["Log \"received <path> <bytes>\"", "the evidence the defender reads"]],
+    ins: [["FROM", "the exfil pod's PUT", true]],
+    outs: [["EVIDENCE", "log line with the exact byte count"]],
+    what: "Stands in for the attacker's server on the internet. Its log is how the dashboard knows exactly how many bytes left.",
+    files: ["deploy/10-lawfirm.yaml: ConfigMap drop → drop.py, Deployment drop", "backend/app/defender.py: _check_exfil_evidence()"] },
+  plugin: { image: "nvcr.io/nvidia/k8s-device-plugin:v0.17.0", container: "plugin", kindLabel: "DaemonSet",
+    steps: [["Find the T4 on the node", ""], ["Apply time-slicing: 8 replicas", "from the ConfigMap"], ["Tell the kubelet: nvidia.com/gpu = 8", "so pods can request a slice"]],
+    ins: [["GPU", "the physical T4"], ["CONFIG", "ConfigMap nvidia-plugin-config"]],
+    outs: [["SCHEDULING", "pods asking for nvidia.com/gpu: 1 can start"]],
+    what: "Without this, Kubernetes doesn't know the GPU exists and no pod could use it.",
+    files: ["deploy/00-gpu-plugin.yaml"] },
+};
+
+// ---------- data: attack + defense flows (order = badge numbers) ----------
+const FLOWS = {
+  a1: { mode: "atk", title: "1 · Gain access", nodes: ["atklap", "edge", "nb"], wires: ["tail"],
+    say: ["The attacker finds Jupyter with no login at 100.106.83.89:8888.", "They open a kernel and run Python inside the notebook pod.", "That code reads the token Kubernetes mounted at /var/run/secrets/kubernetes.io/serviceaccount/token."],
+    real: "Kubeflow 2020 / ShadowRay: exposed notebooks and dashboards.", files: ["backend/app/attacks.py: gain_access()", "backend/app/jupyter.py"] },
+  a2: { mode: "atk", title: "2 · Start miner", nodes: ["nb", "api", "miner", "gpu"], wires: [],
+    say: ["Still inside the notebook, the code calls the k3s API with the stolen token.", "It creates a pod that asks for a GPU slice and runs the matmul loop.", "The T4 jumps to 100% and the firm's jobs slow down."],
+    real: "XMRig on hijacked GPUs (ShadowRay, TeamTNT).", files: ["backend/app/attacks.py: start_miner()"] },
+  a3: { mode: "atk", title: "3 · Steal weights", nodes: ["nb", "api", "exfil", "disk", "drop"], wires: [],
+    say: ["The token creates a second pod that mounts the model-weights disk.", "It uploads contracts-ft-v3.pt to the drop server.", "302,335,262 bytes leave. The drop log proves it."],
+    real: "Model and data theft (ShadowRay).", files: ["backend/app/attacks.py: steal_weights()"] },
+  a4: { mode: "atk", title: "4 · Persistence", nodes: ["nb", "api", "cron", "miner"], wires: [],
+    say: ["The token creates a CronJob named log-rotate.", "Every minute it starts a fresh miner.", "Killing the miner isn't enough; the CronJob must go too."],
+    real: "Backdoor CronJobs (Kubeflow 2020).", files: ["backend/app/attacks.py: persistence()"] },
+  def: { mode: "def", title: "Defender response", nodes: ["cc", "tele", "nemo", "api", "miner", "exfil", "cron", "nb"], wires: ["tail", "https"],
+    say: ["Every 2 s the backend reads the GPU through gpu-telemetry. Every 4 s rules check for pods with no owner, a GPU spike, the weights disk being mounted, or a strange CronJob.",
+          "Nemotron gets the findings and picks tools. Code checks the autonomy policy before anything runs.",
+          "On its own: delete the miner (7 s in our live run), the exfil pod and the CronJob (about 30 s).",
+          "Needs a human: revoke the notebook's token (delete RoleBinding notebook-dev). Approve it in the dashboard."],
+    real: "", files: ["backend/app/defender.py: _detect(), run_agent(), classify()", "backend/logs/decisions.jsonl (every decision)"] },
+};
+
+// ---------- level-0 layout (viewBox 1000 x 640), all boxes on a grid ----------
+const L = {
+  cc: [32, 76, 168, 86], atklap: [32, 184, 168, 86], nemo: [16, 380, 200, 70],
+  api: [322, 92, 220, 44], gpu: [306, 548, 662, 60],
+  ms: [338, 188, 120, 62], train: [474, 188, 120, 62], nb: [610, 188, 120, 62],
+  disk: [338, 266, 120, 50],
+  miner: [338, 360, 120, 58], exfil: [474, 360, 120, 58], cron: [610, 360, 120, 58],
+  tele: [778, 188, 158, 50], edge: [778, 250, 158, 50],
+  drop: [778, 366, 158, 46], plugin: [778, 466, 158, 44],
+};
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function nodeSvg(id) {
+  const [x, y, w, h] = L[id], n = N[id];
+  const cls = ["node", "click", n.atk ? "atk" : "", id === "gpu" ? "gpu" : ""].join(" ");
+  const ty = n.s ? y + h / 2 - 3 : y + h / 2 + 5;
+  return `<g class="${cls}" data-id="${id}" tabindex="0" role="button" aria-label="${esc(n.t)}">
+    <rect class="b" x="${x}" y="${y}" width="${w}" height="${h}" rx="7"/>
+    <text class="t" x="${x + 12}" y="${ty}">${esc(n.t)}</text>
+    ${n.s ? `<text class="s" x="${x + 12}" y="${ty + 17}">${esc(n.s)}</text>` : ""}
+    <g class="badge" hidden><circle cx="${x}" cy="${y + h / 2}" r="10"/><text x="${x}" y="${y + h / 2 + 4}"></text></g>
+  </g>`;
+}
+
+function level0() {
+  return `<svg viewBox="0 0 1000 640" role="img" aria-label="The Brev VM with k3s, its namespaces and pods, your Mac and Nemotron">
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <rect class="g-zone" x="16" y="40" width="200" height="250" rx="10"/><text class="g-zlabel" x="32" y="62">YOUR MAC</text>
+  <g class="node click" data-id="vm" tabindex="0" role="button" aria-label="Brev VM">
+    <rect class="g-zone" x="290" y="16" width="694" height="608" rx="12" style="cursor:pointer"/>
+    <text class="g-zlabel" x="306" y="38">BREV VM · AWS g4dn.xlarge · 4 CPU · 16 GB RAM</text>
+  </g>
+  <rect class="g-zone2" x="306" y="56" width="662" height="474" rx="10"/><text class="g-zlabel" x="322" y="78">k3s (Kubernetes) · runs directly on the VM</text>
+  <rect class="g-zone" x="322" y="152" width="424" height="282" rx="8"/><text class="g-zlabel" x="338" y="174">lawfirm namespace</text>
+  <rect class="g-atkzone" x="330" y="328" width="408" height="98" rx="6"/><text class="g-atklabel" x="338" y="348">Appear during the attack</text>
+  <rect class="g-zone" x="762" y="152" width="190" height="164" rx="8"/><text class="g-zlabel" x="778" y="174">platform</text>
+  <rect class="g-zone" x="762" y="330" width="190" height="96" rx="8"/><text class="g-zlabel" x="778" y="352">drop-site</text>
+  <rect class="g-zone" x="762" y="440" width="190" height="80" rx="8"/><text class="g-zlabel" x="778" y="458">kube-system</text>
+  <path class="wire tail" data-w="tail" d="M216 114 H322"/><text class="wlabel" data-w="tail" x="224" y="106">Tailscale</text>
+  <path class="wire" data-w="https" d="M116 290 V380" marker-end="url(#ah)"/><text class="wlabel" data-w="https" x="124" y="340">HTTPS</text>
+  ${Object.keys(L).map(nodeSvg).join("")}
+</svg>`;
+}
+
+// pod diagram: inputs | container with steps | outputs (viewBox 960 x 430)
+function wrap2(s, max) {             // split one string into at most two lines at a space
+  if (s.length <= max) return [s];
+  const i = s.lastIndexOf(" ", max);
+  return [s.slice(0, i), s.slice(i + 1)];
+}
+function ioBox(x, y, [k, v, warn], side) {
+  const lines = wrap2(v, 30);
+  const ax = side === "in" ? `M${x + 210} ${y + 32} H300` : `M660 ${y + 32} H${x}`;
+  return `<path class="wire" d="${ax}" marker-end="url(#ah2)"/>
+  <g class="p-io${warn ? " warn" : ""}"><rect x="${x}" y="${y}" width="210" height="64" rx="7"/>
+    <text class="k" x="${x + 12}" y="${y + 20}">${esc(k)}</text>
+    ${lines.map((l, i) => `<text x="${x + 12}" y="${y + 38 + i * 16}">${esc(l)}</text>`).join("")}</g>`;
+}
+function podSvg(id) {
+  const p = PODS[id], n = N[id];
+  const ys = [70, 176, 282];
+  const steps = p.steps.map(([a, b], i) => {
+    const y = 96 + i * 76;
+    return `<g class="p-step"><rect x="330" y="${y}" width="300" height="54" rx="7"/>
+      <text class="n" x="344" y="${y + 22}">${i + 1}</text>
+      <text x="364" y="${y + 22}">${esc(a)}</text>
+      ${b ? `<text x="364" y="${y + 40}" style="fill:var(--muted);font-size:11.5px">${esc(b)}</text>` : ""}</g>
+      ${i < p.steps.length - 1 ? `<path class="wire" d="M480 ${y + 54} V${y + 76}" marker-end="url(#ah2)"/>` : ""}`;
+  }).join("");
+  const ioN = Math.max(p.ins.length, p.outs.length);
+  const ch = Math.max(96 + p.steps.length * 76 - 22 + 24, ys[ioN - 1] + 64 + 24) - 16;   // container height fits its content
+  return `<svg viewBox="0 0 960 ${ch + 32}" role="img" aria-label="Inside ${esc(n.t)}">
+  <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <text class="p-col" x="20" y="52">Uses</text><text class="p-col" x="730" y="52">Produces / reaches</text>
+  <rect class="p-cont${p.atk ? " atk" : ""}" x="300" y="16" width="360" height="${ch}" rx="10"/>
+  <text class="p-head" x="320" y="44">${esc(p.container)}</text>
+  <text class="p-img" x="320" y="66">${esc(p.image)}</text>
+  ${steps}
+  ${p.ins.map((io, i) => ioBox(20, ys[i], io, "in")).join("")}
+  ${p.outs.map((io, i) => ioBox(730, ys[i], io, "out")).join("")}
+</svg>`;
+}
+
+// ---------- panel content ----------
+function filesBlock(files) {
+  return `<div class="code-ref"><strong>See the code</strong>${files.map(f => `<div><code>${esc(f)}</code></div>`).join("")}</div>`;
+}
+function panelFor(id) {
+  const n = N[id], p = PODS[id];
+  if (p) return `<div class="kind">${esc(p.kindLabel || "Pod")} · ${esc(n.ns)} namespace</div><h2>${esc(n.t)}</h2>
+    <p>${esc(p.what)}</p>${filesBlock(p.files)}`;
+  return `<div class="kind">${esc(n.kind)}</div><h2>${esc(n.t)}</h2><p>${esc(n.what)}</p><p>${esc(n.why)}</p>${filesBlock(n.files)}`;
+}
+function panelFlow(f) {
+  const F = FLOWS[f];
+  return `<div class="kind">${F.mode === "atk" ? "Attack step" : "Defense"}</div><h2>${esc(F.title)}</h2>
+    <ol>${F.say.map(s => `<li>${esc(s)}</li>`).join("")}</ol>
+    <p class="hint">Numbered boxes on the diagram show the path, in order.${F.real ? " Seen in the wild: " + esc(F.real) : ""}</p>
+    ${filesBlock(F.files)}`;
+}
+const PANEL_HOME = `<div class="kind">Start here</div><h2>The box</h2>
+  <p>One rented VM with a GPU. k3s (Kubernetes) runs right on it. Inside k3s, pods are grouped into namespaces.</p>
+  <ul><li><strong>lawfirm</strong>: the firm's real AI work (the victim workloads)</li>
+  <li><strong>platform</strong>: helpers we run (telemetry, the Jupyter exposure)</li>
+  <li><strong>drop-site</strong>: the attacker's server</li>
+  <li><strong>kube-system</strong>: makes the GPU usable</li></ul>
+  <p>Click a pod to see inside it. Use the buttons below to trace the attack or the defense.</p>`;
+
+// ---------- view state ----------
+let view = "box", flow = null;
+function render() {
+  const d = $("#diagram");
+  if (view === "box") {
+    d.innerHTML = level0();
+    d.querySelectorAll(".node.click").forEach(g => {
+      const go = () => {
+        const id = g.dataset.id;
+        if (N[id].pod) { view = id; flow = null; render(); }
+        else { $("#panel").innerHTML = panelFor(id); }
+      };
+      g.addEventListener("click", go);
+      g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+    });
+    applyFlow();
+    $("#crumbs").innerHTML = `<b>Box</b>`;
+    $("#back").hidden = true;
+    if (!flow) $("#panel").innerHTML = PANEL_HOME;
+  } else {
+    d.innerHTML = podSvg(view);
+    $("#panel").innerHTML = panelFor(view);
+    $("#crumbs").innerHTML = `<a id="cb-box" tabindex="0">Box</a><span>›</span><span>${esc(N[view].ns)}</span><span>›</span><b>${esc(N[view].t)}</b>`;
+    $("#cb-box").onclick = () => { view = "box"; render(); };
+    $("#back").hidden = false;
+  }
+  document.querySelectorAll("#strip button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.flow === flow)));
+}
+function applyFlow() {
+  const svg = $("#diagram svg");
+  svg.classList.remove("dim", "mode-atk", "mode-def");
+  svg.querySelectorAll(".node").forEach(g => { g.classList.remove("on"); const b = g.querySelector(".badge"); if (b) b.hidden = true; });
+  svg.querySelectorAll("[data-w]").forEach(w => w.classList.remove("on"));
+  if (!flow) return;
+  const F = FLOWS[flow];
+  svg.classList.add("dim", F.mode === "atk" ? "mode-atk" : "mode-def");
+  F.nodes.forEach((id, i) => {
+    const g = svg.querySelector(`.node[data-id="${id}"]`); if (!g) return;
+    g.classList.add("on");
+    const b = g.querySelector(".badge"); if (b) { b.hidden = false; b.querySelector("text").textContent = i + 1; }
+  });
+  F.wires.forEach(w => svg.querySelectorAll(`[data-w="${w}"]`).forEach(e => e.classList.add("on")));
+  $("#panel").innerHTML = panelFlow(flow);
+}
+document.querySelectorAll("#strip button").forEach(b => b.addEventListener("click", () => {
+  flow = flow === b.dataset.flow ? null : b.dataset.flow;
+  view = "box"; render();
+}));
+$("#back").addEventListener("click", () => { view = "box"; render(); });
+render();
+
+// ---------- secondary: real-world cases ----------
+const REAL = [
+  ["Kubeflow campaign (Microsoft, 2020)", "Exposed Kubeflow dashboards. Attackers launched containers from Jupyter notebooks and used the mounted service account to spread the XMRig miner, with separate CPU and GPU mining pods.", "Our steps 1–2 and 4 follow the same path.", [["Microsoft", "https://techcommunity.microsoft.com/t5/azure-security-center/new-large-scale-campaign-targets-kubeflow/ba-p/2425750"], ["Threatpost", "https://threatpost.com/kubernetes-cryptomining-machine-learning-framework/156481"]]],
+  ["ShadowRay (Oligo, 2023–24)", "Ray's dashboard and job API have no login by design (CVE-2023-48022, which Ray's maker disputes). Thousands of exposed AI clusters were hit: credentials and models stolen, GPUs mining.", "Same pattern; our entry point is Jupyter instead of Ray.", [["CyberScoop", "https://cyberscoop.com/ray-ai-cryptojacking-vulnerability-exposed-clusters-attack-oligo-security/"], ["The Record", "https://therecord.media/thousands-exposed-to-ray-framework-vulnerability"]]],
+  ["ShadowRay 2.0 (reported 2025)", "Malicious jobs submitted to exposed Ray clusters, which then infect other clusters like a worm, plus DDoS. More than 230,000 Ray servers are publicly reachable.", "Shows where our attack would escalate.", [["The Hacker News", "https://thehackernews.com/2025/11/shadowray-20-exploits-unpatched-ray.html"], ["Dark Reading", "https://www.darkreading.com/cyber-risk/shadowray-20-ai-clusters-crypto-botnets"]]],
+  ["TeamTNT (2020–22)", "Cryptojacking crew on exposed Docker and Kubernetes. It installed NVIDIA drivers in hijacked pods to mine on GPUs, with no GPU bug needed.", "Like our miner: access abuse, not an exploit.", [["Virus Bulletin", "https://www.virusbulletin.com/uploads/pdf/magazine/2022/202204-cryptojacking-on-the-fly.pdf"]]],
+  ["NVIDIAScape (Wiz, 2025)", "CVE-2025-23266: container escape in the NVIDIA Container Toolkit (CVSS 9.0), fixed in 1.17.8.", "Our box runs toolkit 1.20.1, which is patched. We don't exploit it.", [["The Hacker News", "https://thehackernews.com/2025/07/critical-nvidia-container-toolkit-flaw.html"]]],
+];
+$("#real").innerHTML = REAL.map(([t, d, m, links]) => `<div><h3>${esc(t)}</h3><p>${esc(d)}</p><p class="hint">${esc(m)}</p><p>${links.map(([n, u]) => `<a href="${u}">${esc(n)}</a>`).join(" · ")}</p></div>`).join("");
+
+// ---------- secondary: progress ----------
+const PHASES = [
+  { name: "0 · Foundations", items: [["Design docs", "done"], ["Brev T4 box", "done"], ["Tailscale on Mac + box", "done"], ["k3s installed", "done"], ["Device plugin + time-slicing (8)", "done"], ["kubectl over the tailnet", "done"], ["Nemotron via OpenRouter", "done"]] },
+  { name: "1 · Victim cluster", items: [["model-server (GPU)", "done"], ["training (GPU)", "done"], ["notebook with over-granted token", "done"], ["gpu-telemetry", "done"]] },
+  { name: "2 · Attacker", items: [["4-step chain on the real cluster", "done"], ["Reset (~1.5 s)", "done"], ["Real Jupyter access (no login, tailnet only :8888)", "done"], ["Live attack transcript (SSE)", "done"], ["3D laptop attacker app (:5180)", "done"]] },
+  { name: "3 · Defender", items: [["Detection rules", "done"], ["Nemotron 3 Ultra tool loop (miner killed in 7 s)", "done"], ["Autonomy policy + approvals in code", "done"], ["Decision log", "done"], ["Validated record/scope values", "done"], ["Expandable tool calls, pod logs and transcript in the timeline", "done"]] },
+  { name: "4 · Command center", items: [["Dashboard, scope, NIST record, users", "done"], ["3D floor view", "done"], ["Live events from the backend", "done"]] },
+  { name: "5 · Evals + demo", items: [["Scripted incident evals", "todo"], ["Posture scan (prevention)", "todo"], ["Three 90-second demo routes", "todo"], ["Devpost + pitch", "todo"]] },
+];
+let total = 0, score = 0, current = "";
+$("#phases").innerHTML = PHASES.map(p => {
+  const d = p.items.filter(i => i[1] === "done").length;
+  p.items.forEach(([, s]) => { total++; score += s === "done" ? 1 : s === "doing" ? .5 : 0; });
+  if (!current && d < p.items.length) current = p.name;
+  return `<div class="phase"><div class="phase-head"><h3 style="margin:0">${p.name}</h3><span class="hint mono">${d}/${p.items.length}</span></div>
+    <ul>${p.items.map(([t, s]) => `<li><span class="mark ${s}">${s === "done" ? "✓" : s === "doing" ? "◐" : "○"}</span><span>${esc(t)}</span></li>`).join("")}</ul></div>`;
+}).join("");
+const pct = Math.round(score / total * 100);
+$("#pct").textContent = pct + "%"; $("#pctbar").style.width = pct + "%";
+$("#phaseNow").textContent = "Now: " + current;
+</script>

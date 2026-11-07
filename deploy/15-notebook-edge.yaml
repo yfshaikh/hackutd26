@@ -1,0 +1,39 @@
+# Exposes the law-firm notebook to the NETWORK, the way a real misconfigured
+# JupyterLab ends up reachable (ShadowRay). For safety the "network" here is our
+# private Tailscale tailnet, NOT the public internet:
+#
+#   * hostNetwork proxy pod, pinned to the single node
+#   * binds ONLY 100.106.83.89:8888 (the box's Tailscale address) via socat's bind=
+#   * forwards to the in-cluster notebook Service
+#
+# Proof it is tailnet-only, not public:
+#   from the Mac:  curl http://100.106.83.89:8888/api        -> JupyterLab version JSON
+#   on the box:    ss -ltnp | grep 8888                      -> LISTEN 100.106.83.89:8888 (never 0.0.0.0)
+#
+# Brev boxes ship a host-level jupyter.service listening on 0.0.0.0:8888 with no token: a real
+# public exposure. We disabled it (sudo systemctl disable --now jupyter.service) on 2026-11-07.
+# The in-pod notebook is only reachable through THIS proxy, and that pod is the one holding the
+# over-privileged service-account token.
+#
+# Apply: kubectl apply -f deploy/15-notebook-edge.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: notebook-edge, namespace: platform, labels: {app: notebook-edge, owner: platform}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: notebook-edge}}
+  template:
+    metadata: {labels: {app: notebook-edge, owner: platform}}
+    spec:
+      hostNetwork: true                       # bind directly on the node's interfaces
+      dnsPolicy: ClusterFirstWithHostNet      # still resolve *.svc.cluster.local
+      nodeName: brev-bsn9u97vq                # pin to the node that owns 100.106.83.89
+      automountServiceAccountToken: false
+      containers:
+        - name: socat
+          image: alpine/socat:1.8.0.0
+          # bind=100.106.83.89 is what keeps this off the public interface.
+          args:
+            - "-d"
+            - "TCP-LISTEN:8888,bind=100.106.83.89,fork,reuseaddr"
+            - "TCP:notebook.lawfirm.svc.cluster.local:8888"

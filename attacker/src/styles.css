@@ -1,0 +1,92 @@
+/* A single dark look on purpose: it's an attacker's laptop in a dim room. */
+:root {
+  --bg: #0a0b0d; --panel: #111317; --panel-2: #0e1014; --line: #1f242c;
+  --ink: #cfd6dc; --dim: #6c7581; --amber: #e8a54b; --red: #f06a5a; --ok: #74c69d; --blue: #8aa9f2;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
+button { font: inherit; color: inherit; }
+button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.app { position: relative; height: 100%; overflow: hidden; }
+.loading, .hint { position: absolute; left: 0; right: 0; text-align: center; color: var(--dim); font: 13px var(--mono); }
+.loading { top: 45%; }
+.hint { bottom: 28px; }
+
+.open-cue { background: rgba(10, 11, 13, .75); border: 1px solid #3a3f47; border-radius: 6px; padding: 6px 12px;
+  font: 12px var(--mono); color: var(--ink); cursor: pointer; white-space: nowrap; transition: border-color .2s, color .2s; }
+.open-cue.hot, .open-cue:hover { border-color: var(--amber); color: var(--amber); }
+
+.screen-in { position: absolute; inset: 0; animation: power .5s ease-out; }
+@keyframes power { from { opacity: 0; filter: brightness(2.2); } to { opacity: 1; filter: none; } }
+@media (prefers-reduced-motion: reduce) { .screen-in { animation: none; } }
+
+/* terminal */
+.term { height: 100%; display: flex; flex-direction: column; font-family: var(--mono); background: radial-gradient(ellipse at 50% 0%, #11151b 0%, var(--bg) 70%); }
+.bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.host { color: var(--amber); font-weight: 700; }
+.sep { color: var(--dim); }
+.target { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); margin-left: auto; }
+.dot.on { background: var(--ok); }
+.ghost { background: none; border: 1px solid var(--line); border-radius: 5px; padding: 5px 10px; cursor: pointer; font: 12px var(--mono); }
+.ghost:hover:not(:disabled) { border-color: #3a414b; }
+.ghost:disabled { opacity: .5; cursor: default; }
+
+.empty { margin: auto; max-width: 46ch; text-align: center; padding: 24px; }
+.empty h2 { font-size: 18px; margin: 0 0 6px; color: var(--red); }
+.empty p { color: var(--dim); font-family: var(--sans); }
+code { font-family: var(--mono); color: var(--ink); }
+
+.grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; grid-template-rows: auto minmax(300px, 1fr); overflow: auto; } }
+.side { border-right: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.card h3 { margin: 0 0 8px; font-size: 12px; color: var(--dim); font-weight: 400; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12.5px; }
+dt { color: var(--dim); } dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+dd.ok { color: var(--ok); } .dim { color: var(--dim); }
+details { margin-top: 8px; font-size: 12px; } summary { cursor: pointer; color: var(--amber); }
+
+.steps { display: grid; gap: 8px; }
+.step { display: grid; grid-template-columns: 26px 1fr; gap: 10px; text-align: left; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px; cursor: pointer; transition: border-color .15s, background .15s; }
+.step .num { font-weight: 700; color: var(--dim); font-size: 15px; }
+.step .body { display: grid; gap: 3px; min-width: 0; }
+.step .label { font-weight: 700; font-size: 13px; }
+.step .why { font: 12.5px/1.45 var(--sans); color: #aab3bd; }
+.step .seen { font-size: 11px; color: var(--dim); }
+.step.ready { border-color: #6b4d24; }
+.step.ready .num { color: var(--amber); }
+.step.ready:hover:not(:disabled) { background: #16130e; border-color: var(--amber); }
+.step.running { border-color: var(--amber); }
+.step.done .num { color: var(--ok); }
+.step.locked, .step:disabled { cursor: default; }
+.step.locked { opacity: .5; }
+.err { color: var(--red); font-size: 12px; margin: 0; }
+.reset { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; margin-top: auto; }
+.danger { background: #3a1512; border: 1px solid var(--red); color: #ffd3cd; border-radius: 5px; padding: 5px 10px; cursor: pointer; font: 12px var(--mono); }
+
+.feedwrap { position: relative; min-height: 0; display: flex; flex-direction: column; }
+.banner { display: flex; gap: 12px; align-items: baseline; padding: 12px 16px; background: #2a0f0d; border-bottom: 1px solid var(--red); color: #ffd3cd; animation: flash .6s ease-out; }
+.banner strong { color: var(--red); letter-spacing: .08em; text-transform: uppercase; font-size: 13px; }
+.banner span { font: 13px var(--sans); }
+@keyframes flash { from { background: #5a1a14; } }
+.feed { flex: 1; overflow: auto; padding: 14px 16px 40px; font-size: 12.5px; }
+.ln { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 2px 0; align-items: start; }
+.ln > :not(.ts) { min-width: 0; }
+.ts { color: #47505b; }
+.prompt { color: var(--amber); }
+.note { color: var(--dim); font-style: italic; }
+.http b { color: var(--blue); font-weight: 700; }
+.http { overflow-wrap: anywhere; }
+.st.ok { color: var(--ok); } .st.warn { color: var(--amber); } .st.bad { color: var(--red); font-weight: 700; }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+pre.code { background: var(--panel-2); border: 1px solid var(--line); border-left: 2px solid var(--amber); border-radius: 4px; padding: 8px 10px; color: #e2d6bf; }
+pre.out { color: #9aa4ae; }
+pre.small { font-size: 11px; max-height: 180px; overflow: auto; }
+.jump { position: absolute; right: 16px; bottom: 12px; background: var(--panel); border: 1px solid var(--amber); color: var(--amber);
+  border-radius: 5px; padding: 5px 10px; cursor: pointer; font: 12px var(--mono); }

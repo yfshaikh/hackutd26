@@ -1,0 +1,242 @@
+# The victim: Halloran & Vance LLP's GPU workloads. Everything here is real: real pods on the T4,
+# a real PyTorch model whose weights live on a volume, and a notebook with a real RBAC mistake.
+#
+#   model-server  serves the firm's fine-tuned model (inference on the GPU)
+#   training      keeps fine-tuning a model on the GPU
+#   notebook      a data scientist's notebook. THE HOLE: its ServiceAccount can create pods and
+#                 cronjobs in the namespace, a common real-world over-grant. The attacker steals its token.
+#   gpu-telemetry a platform pod the command center execs nvidia-smi in
+#
+# Apply: kubectl apply -f deploy/10-lawfirm.yaml
+apiVersion: v1
+kind: Namespace
+metadata: {name: lawfirm, labels: {owner: law-firm}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: platform, labels: {owner: platform}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: model-weights, namespace: lawfirm, labels: {asset: model-weights}}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path        # k3s's built-in storage: a directory on the node's disk
+  resources: {requests: {storage: 2Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: workload-scripts, namespace: lawfirm}
+data:
+  model_server.py: |
+    # Creates the firm's model once (a small transformer, ~300 MB of weights), then serves it on the GPU.
+    import os, threading, time, torch, torch.nn as nn
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    PATH = "/weights/contracts-ft-v3.pt"
+    model = nn.TransformerEncoder(nn.TransformerEncoderLayer(1024, 16, 4096, batch_first=True), 6).cuda().eval()
+    if os.path.exists(PATH):
+        model.load_state_dict(torch.load(PATH, weights_only=True))   # never unpickle code from a volume an attacker can write
+    else:
+        torch.save(model.state_dict(), PATH)
+    print("weights ready:", os.path.getsize(PATH) // 2**20, "MiB", flush=True)
+    def serve_load():                    # steady inference traffic, like clients querying the model
+        x = torch.randn(4, 128, 1024, device="cuda")
+        while True:
+            with torch.no_grad():
+                model(x)
+            torch.cuda.synchronize(); time.sleep(0.4)
+    threading.Thread(target=serve_load, daemon=True).start()
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok\n")
+        def log_message(self, *a): pass
+    HTTPServer(("", 8080), H).serve_forever()
+  train.py: |
+    # A small fine-tuning loop on the GPU, paced so it uses part of the card.
+    import time, torch, torch.nn as nn
+    model = nn.Sequential(nn.Linear(2048, 4096), nn.GELU(), nn.Linear(4096, 2048)).cuda()
+    opt = torch.optim.AdamW(model.parameters(), 1e-4)
+    step = 0
+    while True:
+        x = torch.randn(256, 2048, device="cuda")
+        loss = (model(x) - x).pow(2).mean()
+        opt.zero_grad(); loss.backward(); opt.step(); step += 1
+        if step % 200 == 0:
+            print(f"step {step} loss {loss.item():.4f}", flush=True)
+        time.sleep(0.05)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: model-server, namespace: lawfirm, labels: {app: model-server, owner: law-firm}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}           # the volume is ReadWriteOnce
+  selector: {matchLabels: {app: model-server}}
+  template:
+    metadata: {labels: {app: model-server, owner: law-firm}}
+    spec:
+      runtimeClassName: nvidia
+      automountServiceAccountToken: false
+      containers:
+        - name: server
+          image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+          command: ["python", "/scripts/model_server.py"]
+          ports: [{containerPort: 8080}]
+          resources: {limits: {nvidia.com/gpu: 1}}
+          volumeMounts:
+            - {name: weights, mountPath: /weights}
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - {name: weights, persistentVolumeClaim: {claimName: model-weights}}
+        - {name: scripts, configMap: {name: workload-scripts}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: training, namespace: lawfirm, labels: {app: training, owner: law-firm}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: training}}
+  template:
+    metadata: {labels: {app: training, owner: law-firm}}
+    spec:
+      runtimeClassName: nvidia
+      automountServiceAccountToken: false
+      containers:
+        - name: train
+          image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+          command: ["python", "/scripts/train.py"]
+          resources: {limits: {nvidia.com/gpu: 1}}
+          volumeMounts: [{name: scripts, mountPath: /scripts}]
+      volumes: [{name: scripts, configMap: {name: workload-scripts}}]
+---
+# The notebook and its over-privileged identity (the vulnerability).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: notebook, namespace: lawfirm}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: notebook-dev, namespace: lawfirm}
+rules:
+  # "So the notebook can launch experiments." Far too broad: anyone holding this token can start
+  # arbitrary pods (including ones that mount the model-weights volume) and schedule cronjobs.
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, create, delete]
+  - apiGroups: ["batch"]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: notebook-dev, namespace: lawfirm}
+subjects: [{kind: ServiceAccount, name: notebook, namespace: lawfirm}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: notebook-dev}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: notebook, namespace: lawfirm, labels: {app: notebook, owner: law-firm}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: notebook}}
+  template:
+    metadata: {labels: {app: notebook, owner: law-firm}}
+    spec:
+      serviceAccountName: notebook            # over-privileged token is auto-mounted (the hole)
+      containers:
+        - name: notebook
+          image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+          # A REAL JupyterLab, like a ShadowRay-style exposed notebook: auth fully disabled.
+          # jupyterlab is pip-installed into the already-pulled PyTorch image at start (~60-90s),
+          # so there is no new multi-GB image to pull.
+          command: ["bash", "-lc"]
+          args:
+            - |
+              pip install --no-cache-dir --disable-pip-version-check jupyterlab 2>&1 | tail -1
+              exec jupyter lab \
+                --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
+                --ServerApp.token='' --ServerApp.password='' \
+                --IdentityProvider.token='' \
+                --ServerApp.disable_check_xsrf=True \
+                --ServerApp.allow_origin='*' --ServerApp.allow_remote_access=True \
+                --ServerApp.root_dir=/root
+          ports: [{containerPort: 8888, name: http}]
+          readinessProbe:
+            httpGet: {path: /api, port: 8888}
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60               # allow up to ~5 min for the first pip install
+---
+# ClusterIP for the notebook so the edge proxy can reach it by DNS.
+apiVersion: v1
+kind: Service
+metadata: {name: notebook, namespace: lawfirm, labels: {app: notebook, owner: law-firm}}
+spec:
+  selector: {app: notebook}
+  ports: [{name: http, port: 8888, targetPort: 8888}]
+---
+# Platform telemetry: the command center runs nvidia-smi in here (via the Kubernetes API).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: gpu-telemetry, namespace: platform, labels: {app: gpu-telemetry, owner: platform}}
+spec:
+  selector: {matchLabels: {app: gpu-telemetry}}
+  template:
+    metadata: {labels: {app: gpu-telemetry, owner: platform}}
+    spec:
+      runtimeClassName: nvidia
+      automountServiceAccountToken: false
+      containers:
+        - name: smi
+          image: nvidia/cuda:12.4.1-base-ubuntu22.04
+          command: ["sleep", "infinity"]
+          resources: {limits: {nvidia.com/gpu: 1}}
+---
+# Stands in for the attacker's server on the internet: receives whatever is uploaded to it.
+apiVersion: v1
+kind: Namespace
+metadata: {name: drop-site, labels: {owner: attacker}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: drop, namespace: drop-site}
+data:
+  drop.py: |
+    import os
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    class H(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            n = int(self.headers["Content-Length"]); left = n
+            with open("/loot/" + os.path.basename(self.path), "wb") as f:
+                while left:
+                    chunk = self.rfile.read(min(left, 1 << 20)); f.write(chunk); left -= len(chunk)
+            print("received", self.path, n, "bytes", flush=True)
+            self.send_response(201); self.end_headers()
+        def log_message(self, *a): pass
+    os.makedirs("/loot", exist_ok=True)
+    HTTPServer(("", 8000), H).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: drop, namespace: drop-site, labels: {app: drop}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: drop}}
+  template:
+    metadata: {labels: {app: drop}}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: drop
+          image: python:3.12-slim
+          command: ["python", "/app/drop.py"]
+          volumeMounts: [{name: app, mountPath: /app}]
+      volumes: [{name: app, configMap: {name: drop}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: drop, namespace: drop-site}
+spec:
+  selector: {app: drop}
+  ports: [{port: 80, targetPort: 8000}]

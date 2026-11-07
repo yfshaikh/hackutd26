@@ -1,0 +1,30 @@
+# Secrets: never commit. Document variables in README templates instead.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+kubeconfig*
+*.kubeconfig
+
+# Python (backend)
+__pycache__/
+*.py[oc]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Node (console, attacker)
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Runtime output
+backend/logs/
+*.log
+
+# Editor / OS / local tool state
+.DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json
