@@ -600,7 +600,11 @@ table.users tr:last-child td { border-bottom: 0; }
 .output { margin: 0; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-m); white-space: pre-wrap; overflow-x: auto; font-family: var(--mono); font-size: 13px; max-height: 260px; }
 
 /* ---- 3D floor ------------------------------------------------------- */
-.floor-wrap { position: relative; min-height: 360px; flex: 1; background: #16212c; border-radius: 0 0 var(--r-m) var(--r-m); overflow: hidden; }
+.floor-wrap { position: relative; min-height: 360px; flex: 1; border-radius: 0 0 var(--r-m) var(--r-m); overflow: hidden;
+  background:
+    radial-gradient(900px 420px at 50% 115%, rgba(120, 40, 255, 0.35), transparent 70%),
+    radial-gradient(640px 300px at 50% -10%, rgba(255, 63, 216, 0.1), transparent 70%),
+    #07060f; }
 .floor-wrap canvas { display: block; width: 100%; height: 100%; }
 .floor-legend { position: absolute; left: 10px; bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap; pointer-events: none; }
 .floor-page { flex: 1; display: flex; flex-direction: column; padding: 12px 16px 16px; gap: 12px; }
@@ -759,3 +763,8 @@ textarea.input { resize: vertical; min-height: 38px; }
 .evals-sid { display: inline-block; min-width: 1.4em; color: var(--muted); font-variant-numeric: tabular-nums; }
 .evals-rate { margin-left: 8px; color: var(--muted); font-weight: 700; font-variant-numeric: tabular-nums; }
 .evals-model { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+
+/* Evals: run-from-UI button + progress banner */
+.evals .panel-head .btn { margin-left: auto; }
+.eval-run { font-size: 13px; color: var(--invest); background: var(--invest-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.eval-run.err { color: var(--exfil); background: var(--exfil-bg); }

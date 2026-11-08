@@ -359,3 +359,14 @@ export interface EvalsResults {
     byModel: Record<string, EvalModelSummary>;
   };
 }
+
+/** Live progress of a UI-triggered eval run (GET /defender/evals/status). */
+export interface EvalsRunStatus {
+  running: boolean;
+  done: number;
+  total: number;
+  current: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}

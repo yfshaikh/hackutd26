@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
-from . import defender
+from . import defender, evals_run
 from .auth import current_user
 from .models import User
 
@@ -36,11 +36,25 @@ def defender_metrics(user: User = Depends(current_user)) -> dict:
 
 @router.get("/evals")
 def defender_evals(user: User = Depends(current_user)) -> dict:
-    """WS-C eval results written by `uv run python -m evals`. Empty dict until a run
-    has produced evals/results.json, which the console renders as an empty state."""
+    """WS-C eval results. Empty dict until a run has produced evals/results.json, which the
+    console renders as an empty state."""
     if not _EVALS_RESULTS.exists():
         return {}
     try:
         return json.loads(_EVALS_RESULTS.read_text())
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+@router.post("/evals/run")
+def run_evals(user: User = Depends(current_user)) -> dict:
+    """Start the eval suite in the background (configured model, one run per scenario). Returns
+    whether it started (False if one is already in flight) plus the live status to poll."""
+    started = evals_run.start()
+    return {"started": started, **evals_run.status()}
+
+
+@router.get("/evals/status")
+def evals_status(user: User = Depends(current_user)) -> dict:
+    """Live progress of a UI-triggered eval run; the console polls this until running is false."""
+    return evals_run.status()

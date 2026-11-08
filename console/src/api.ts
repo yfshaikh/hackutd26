@@ -14,6 +14,7 @@ import type {
   AttackStepId,
   ConnectionState,
   EvalsResults,
+  EvalsRunStatus,
   IncidentRecord,
   IncidentRecordPatch,
   NewUser,
@@ -124,6 +125,11 @@ export const addUser = (user: NewUser) => post<User>("/users", user);
 // ---- WS-C: eval results --------------------------------------------------
 
 /** Eval results, or null when none have been produced yet (backend returns 404 or {}). */
+/** Start an eval run in the background; `started` is false if one is already in flight. */
+export const runEvals = () => post<{ started: boolean } & EvalsRunStatus>("/defender/evals/run");
+/** Live progress of a UI-triggered eval run; poll until `running` is false. */
+export const evalsStatus = () => request<EvalsRunStatus>("/defender/evals/status");
+
 export async function getEvals(): Promise<EvalsResults | null> {
   try {
     const data = await request<EvalsResults | Record<string, never>>("/defender/evals");

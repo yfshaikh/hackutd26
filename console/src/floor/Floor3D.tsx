@@ -10,17 +10,17 @@ import { useLive } from "../context";
 import { useReducedMotion } from "../hooks";
 import type { Cluster, ClusterNode, Pod } from "../types";
 
-// State colours. Same meaning as the 2D view and the legend below.
+// State colours — HackUTD "Zero Day" palette. Same meaning as the legend below.
 const C = {
-  normal: 0x34c98a,
-  high: 0xf3b23c,
-  attack: 0xff4d42,
-  contained: 0x5aa2f0,
-  fault: 0xe07bdb,
-  rack: 0x2a3644,
-  rackEdge: 0x5d7387,
-  floor: 0x1b2632,
-  grid: 0x31455a,
+  normal: 0x4fe3a8,     // green
+  high: 0xffc857,       // amber
+  attack: 0xff5c7c,     // magenta-red
+  contained: 0x8fa8ff,  // cyan-blue
+  fault: 0xf08bff,      // magenta
+  rack: 0x1a1430,       // dark violet cabinet
+  rackEdge: 0x7a5cff,   // violet edges
+  floor: 0x0b0a18,      // near-black violet
+  grid: 0x3a2f62,       // purple grid
 };
 
 const RACK_W = 0.9;
@@ -47,14 +47,14 @@ function label(text: string, sub: string): THREE.Sprite {
   cv.width = 512;
   cv.height = 128;
   const g = cv.getContext("2d")!;
-  g.fillStyle = "rgba(10,20,30,0.82)";
+  g.fillStyle = "rgba(10,8,22,0.86)";
   g.beginPath();
   g.roundRect(4, 4, 504, 120, 16);
   g.fill();
-  g.fillStyle = "#e8eef4";
+  g.fillStyle = "#f4f2ff";
   g.font = "700 46px 'IBM Plex Mono', monospace";
   g.fillText(text, 24, 58, 470);
-  g.fillStyle = "#a2b3c3";
+  g.fillStyle = "#b6a6d8";
   g.font = "400 32px 'Atkinson Hyperlegible Next', sans-serif";
   g.fillText(sub, 24, 104, 470);
   const tex = new THREE.CanvasTexture(cv);
@@ -124,7 +124,7 @@ function build(cluster: Cluster): Built {
       const y = top - pi * 0.11;
       if (y < 0.12) return;
       const hostile = p.owner === "unknown" && !p.quarantined;
-      const color = p.quarantined ? C.contained : hostile ? C.attack : 0x8da2b5;
+      const color = p.quarantined ? C.contained : hostile ? C.attack : 0x9a8fc4;
       const mat = new THREE.MeshStandardMaterial({
         color,
         emissive: color,
@@ -220,10 +220,14 @@ export default function Floor3D({ onSelect }: { onSelect: (s: Selection) => void
     controls.maxDistance = 18;
     controls.enableDamping = !reducedRef.current;
 
-    scene.add(new THREE.HemisphereLight(0xbfd4ea, 0x0d1822, 1.1));
-    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    scene.fog = new THREE.Fog(0x0a0a16, 9, 26); // violet depth haze
+    scene.add(new THREE.HemisphereLight(0x9a7cff, 0x0a0a16, 1.0));
+    const key = new THREE.DirectionalLight(0xdcccff, 1.3);
     key.position.set(3, 6, 4);
     scene.add(key);
+    const glow = new THREE.PointLight(0x7828ff, 26, 22, 2); // purple room glow
+    glow.position.set(0, 2.2, 3.2);
+    scene.add(glow);
 
     // Room: floor tiles and two low walls
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 10), new THREE.MeshStandardMaterial({ color: C.floor, roughness: 0.95 }));
@@ -232,7 +236,7 @@ export default function Floor3D({ onSelect }: { onSelect: (s: Selection) => void
     const grid = new THREE.GridHelper(14, 23, C.grid, C.grid);
     grid.position.y = 0.002;
     scene.add(grid);
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x22303e, roughness: 1 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x151030, roughness: 1 });
     const back = new THREE.Mesh(new THREE.BoxGeometry(14, 2.8, 0.1), wallMat);
     back.position.set(0, 1.4, -2.5);
     scene.add(back);
