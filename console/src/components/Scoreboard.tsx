@@ -18,7 +18,7 @@ export function Scoreboard() {
   }, []);
   if (!m || !m.detectedAt) return null; // nothing to show before an incident
 
-  const baselineMin = Math.round(m.manualBaselineSeconds / 60);
+  const baselineMin = Math.round((m.manualBaselineSeconds ?? 900) / 60);
   const a = m.containmentActions;
   return (
     <section className="scoreboard" aria-label="Incident outcome">
@@ -35,9 +35,9 @@ export function Scoreboard() {
         <span className="score-sub">autonomous / human-approved</span>
       </div>
       <div className="score-tile">
-        <span className="score-val">{m.gpuHoursSaved.toFixed(2)}<i> h</i></span>
+        <span className="score-val">{(m.gpuHoursSaved ?? 0).toFixed(2)}<i> h</i></span>
         <span className="score-label">GPU compute protected</span>
-        <span className="score-sub">${m.dollarsSaved.toFixed(2)} saved · ${m.gpuUsdPerHour}/hr</span>
+        <span className="score-sub">${(m.dollarsSaved ?? 0).toFixed(2)} saved · ${m.gpuUsdPerHour ?? 0.53}/hr</span>
       </div>
       <div className="score-tile">
         <span className="score-val">{m.approvals.meanTimeToApproveSeconds != null ? fmtSecs(m.approvals.meanTimeToApproveSeconds) : "—"}</span>
