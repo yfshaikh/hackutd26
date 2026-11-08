@@ -42,6 +42,12 @@ TAILSCALE_IP = os.environ.get("TAILSCALE_IP", "100.106.83.89")
 LAWFIRM_NS = "lawfirm"
 PLATFORM_NS = "platform"
 DROP_NS = "drop-site"
+
+# WS-A: the defender agent holds a read-only identity; approved actions run through a
+# separate privileged executor identity. Both ServiceAccounts live here (deploy/30-agent-rbac.yaml).
+AGENT_SA_NS = "platform"
+AGENT_READONLY_SA = "agent-readonly"
+AGENT_EXECUTOR_SA = "agent-executor"
 TELEMETRY_LABEL = "app=gpu-telemetry"
 MODEL_WEIGHTS_PVC = "model-weights"
 NOTEBOOK_LABEL = "app=notebook"

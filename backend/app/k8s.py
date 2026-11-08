@@ -54,6 +54,84 @@ def admin_rbac() -> client.RbacAuthorizationV1Api:
     return client.RbacAuthorizationV1Api(admin())
 
 
+# ---------------------------------------------------------------------------
+# WS-A: the defender agent's two scoped identities.
+#   agent_readonly() - what the agent investigates with. RBAC denies every write.
+#   executor()       - runs ONLY actions a human (or policy) approved. Privileged.
+# Tokens are minted in-memory via the TokenRequest API (never read from a file,
+# never printed). If the ServiceAccounts aren't applied yet, we fall back to the
+# admin client and say so once, so the demo degrades loudly instead of crashing.
+# ---------------------------------------------------------------------------
+_sa_clients: dict[str, client.ApiClient] = {}
+_sa_fallback_warned: set[str] = set()
+
+
+def _mint_sa_client(sa_name: str) -> client.ApiClient:
+    from .config import AGENT_SA_NS
+    if sa_name in _sa_clients:
+        return _sa_clients[sa_name]
+    admin()  # ensure host + CA are loaded into the default config
+    try:
+        req = client.AuthenticationV1TokenRequest(
+            spec=client.V1TokenRequestSpec(expiration_seconds=3600, audiences=[])
+        )
+        token = admin_core().create_namespaced_service_account_token(
+            name=sa_name, namespace=AGENT_SA_NS, body=req
+        ).status.token
+        base = client.Configuration.get_default_copy()
+        cfg = client.Configuration()
+        cfg.host = base.host
+        cfg.ssl_ca_cert = base.ssl_ca_cert
+        cfg.verify_ssl = base.verify_ssl
+        cfg.api_key = {"authorization": token}
+        cfg.api_key_prefix = {"authorization": "Bearer"}
+        api = client.ApiClient(cfg)
+    except ApiException as e:  # SA not applied yet, or TokenRequest unavailable
+        if sa_name not in _sa_fallback_warned:
+            _sa_fallback_warned.add(sa_name)
+            print(f"[k8s] ServiceAccount '{sa_name}' unavailable ({e.reason}); using admin "
+                  f"fallback. Apply deploy/30-agent-rbac.yaml to enable the real split.")
+        api = admin()
+    _sa_clients[sa_name] = api
+    return api
+
+
+def agent_readonly() -> client.ApiClient:
+    from .config import AGENT_READONLY_SA
+    return _mint_sa_client(AGENT_READONLY_SA)
+
+
+def agent_readonly_core() -> client.CoreV1Api:
+    return client.CoreV1Api(agent_readonly())
+
+
+def executor() -> client.ApiClient:
+    from .config import AGENT_EXECUTOR_SA
+    return _mint_sa_client(AGENT_EXECUTOR_SA)
+
+
+def executor_core() -> client.CoreV1Api:
+    return client.CoreV1Api(executor())
+
+
+def executor_batch() -> client.BatchV1Api:
+    return client.BatchV1Api(executor())
+
+
+def executor_net() -> client.NetworkingV1Api:
+    return client.NetworkingV1Api(executor())
+
+
+def executor_rbac() -> client.RbacAuthorizationV1Api:
+    return client.RbacAuthorizationV1Api(executor())
+
+
+def reset_agent_clients() -> None:
+    """Drop cached SA clients (after RBAC changes or token expiry)."""
+    _sa_clients.clear()
+    _sa_fallback_warned.clear()
+
+
 def set_attacker_token(token: str) -> None:
     """Install the stolen token and rebuild the attacker ApiClient from it."""
     global _attacker_token, _attacker_api
@@ -133,6 +211,9 @@ def first_pod_name(api: client.ApiClient, namespace: str, label_selector: str) -
 
 __all__ = [
     "admin", "admin_core", "admin_batch", "admin_net", "admin_rbac",
+    "agent_readonly", "agent_readonly_core",
+    "executor", "executor_core", "executor_batch", "executor_net", "executor_rbac",
+    "reset_agent_clients",
     "attacker", "attacker_core", "attacker_batch",
     "set_attacker_token", "has_attacker_token", "attacker_token",
     "clear_attacker_token", "exec_in_pod", "first_pod_name",

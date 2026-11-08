@@ -1,0 +1,114 @@
+# WS-A: the defender agent's two scoped identities.
+#   agent-readonly  - what Nemotron investigates with. Can read, cannot mutate anything.
+#   agent-executor  - runs ONLY the actions a human (or policy) approved. Least privilege:
+#                     exactly the verbs the five containment tools need, nothing more.
+# The backend mints short-lived tokens for these via the TokenRequest API (k8s.py); it
+# never stores or prints them. Apply: kubectl apply -f deploy/30-agent-rbac.yaml
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-readonly
+  namespace: platform
+---
+# Read-only: get/list/watch for investigation. No create/update/patch/delete anywhere.
+# Deliberately cluster-wide: the agent may need to investigate across namespaces, but it
+# can only READ. All mutation is namespaced to lawfirm (see agent-executor below). The
+# asymmetry is the point — investigate broadly, act narrowly.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-readonly
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "nodes", "namespaces", "services", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-readonly
+subjects:
+  - kind: ServiceAccount
+    name: agent-readonly
+    namespace: platform
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-executor
+  namespace: platform
+---
+# Executor: exactly the verbs the containment tools call, scoped to the lawfirm namespace
+# (where the incident is). Namespaced Role, NOT a ClusterRole — least privilege.
+#   delete_pod            -> pods delete
+#   quarantine_pod        -> pods patch + networkpolicies create/delete
+#   delete_cronjob        -> cronjobs delete
+#   revoke_service_account-> rolebindings delete, pinned to the one notebook-dev binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-executor
+  namespace: lawfirm
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "delete", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "delete"]
+    resourceNames: ["notebook-dev"]   # can ONLY touch the over-granted binding, nothing else
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-executor
+  namespace: lawfirm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-executor
+subjects:
+  - kind: ServiceAccount
+    name: agent-executor
+    namespace: platform
+---
+# cordon_node -> nodes patch. Nodes are cluster-scoped, so this one grant must be a
+# ClusterRole. Kept tiny: get + patch on nodes only, nothing else cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-executor-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-executor-nodes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agent-executor-nodes
+subjects:
+  - kind: ServiceAccount
+    name: agent-executor
+    namespace: platform

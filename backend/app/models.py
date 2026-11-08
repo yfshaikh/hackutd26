@@ -122,6 +122,13 @@ class Approval(BaseModel):
     rationale: str
     policyReason: str
     impact: str
+    # WS-A ranked-plan fields: let the console render proposed actions as a ranked
+    # remediation plan (sort by rank) with a cited runbook step. Optional so older
+    # approvals and non-plan callers still validate.
+    rank: Optional[int] = None
+    runbookRef: Optional[str] = None
+    risk: Optional[Literal["low", "medium", "high"]] = None
+    reversible: Optional[bool] = None
     status: ApprovalStatus
     decidedBy: Optional[str] = None
     decidedAt: Optional[str] = None

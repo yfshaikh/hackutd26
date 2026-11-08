@@ -260,6 +260,8 @@ a denied write in the logs); metrics available via an endpoint.
 
 ### WS-B — Winstead full  (suggested: Opus 5.5 / any — pure UI)
 
+**Full handoff spec:** [specs/ws-b.md](specs/ws-b.md) — self-contained, includes the plan contract. Hand that file to the implementer.
+
 **What this is.** The blue-team dashboard a law firm's security operator uses to review
 and approve the agent's proposed actions during an incident. Pure front-end plus a record
 API — no attack or defender logic, nothing offensive. On the user's own rented box (see
@@ -310,6 +312,8 @@ renders pass-rate per metric per scenario.
 ---
 
 ### WS-D — Cyber: new attacks  (suggested: open model)
+
+**Full handoff spec:** [specs/ws-d.md](specs/ws-d.md) — self-contained, matches the real step-registration surface (4 touch points). Hand that file to the implementer.
 
 **Goal.** Add a **DDoS attack step** grounded in ShadowRay 2.0 (sockstress-style outbound
 connection flood from the compromised pod), and a **prompt-injection fixture** for eval

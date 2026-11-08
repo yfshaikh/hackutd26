@@ -22,8 +22,11 @@ from .k8s import (
     admin,
     admin_batch,
     admin_core,
-    admin_net,
-    admin_rbac,
+    agent_readonly_core,
+    executor_batch,
+    executor_core,
+    executor_net,
+    executor_rbac,
     first_pod_name,
 )
 from .models import Approval, IncidentRecord, RecordAction, now_iso
@@ -138,11 +141,27 @@ def classify(tool: str, args: dict) -> tuple[str, str, str]:
     return "needs-approval", "unrecognized action", "unknown impact"
 
 
+# Runbook: the ranked remediation playbook the agent cites when it proposes an action.
+# Lower rank = do first (stop the bleeding, then persistence, then identity).
+# ponytail: static table keyed by tool; a config-driven runbook is the Future item.
+_RUNBOOK = {
+    "quarantine_pod":         {"rank": 1, "runbookRef": "RB-02#isolate",  "risk": "low",    "reversible": True},
+    "delete_pod":             {"rank": 2, "runbookRef": "RB-01#contain",  "risk": "low",    "reversible": False},
+    "delete_cronjob":         {"rank": 3, "runbookRef": "RB-03#persist",  "risk": "low",    "reversible": False},
+    "revoke_service_account": {"rank": 4, "runbookRef": "RB-04#identity", "risk": "high",   "reversible": False},
+    "cordon_node":            {"rank": 5, "runbookRef": "RB-05#node",     "risk": "medium", "reversible": True},
+}
+
+
+def _runbook_for(tool: str) -> dict:
+    return _RUNBOOK.get(tool, {"rank": 99, "runbookRef": "RB-00#unknown", "risk": "high", "reversible": False})
+
+
 # ---------------------------------------------------------------------------
 # Raw tool executors (the real Kubernetes actions)
 # ---------------------------------------------------------------------------
 def _do_list_pods(namespace: str = config.LAWFIRM_NS) -> str:
-    core = admin_core()
+    core = agent_readonly_core()  # the agent investigates read-only
     quarantined = quarantine_np_names()
     rows = []
     for p in core.list_namespaced_pod(namespace).items:
@@ -159,7 +178,7 @@ def _do_list_pods(namespace: str = config.LAWFIRM_NS) -> str:
 
 def _do_describe_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
     try:
-        p = admin_core().read_namespaced_pod(name, namespace)
+        p = agent_readonly_core().read_namespaced_pod(name, namespace)
     except ApiException as e:
         return f"error: {e.reason}"
     vols = [
@@ -183,7 +202,7 @@ def _do_describe_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
 
 def _do_get_pod_logs(name: str, namespace: str = config.LAWFIRM_NS) -> str:
     try:
-        return admin_core().read_namespaced_pod_log(name, namespace, tail_lines=40) or "(empty)"
+        return agent_readonly_core().read_namespaced_pod_log(name, namespace, tail_lines=40) or "(empty)"
     except ApiException as e:
         return f"error: {e.reason}"
 
@@ -195,14 +214,26 @@ def _do_gpu_status() -> str:
     )
 
 
+def _require_lawfirm(namespace: str) -> str | None:
+    """Defense-in-depth: the executor only ever acts in lawfirm, even if RBAC were looser.
+    Returns an error string to refuse, or None to proceed."""
+    if namespace != config.LAWFIRM_NS:
+        return f"refused: executor only acts in {config.LAWFIRM_NS}, not {namespace!r}"
+    return None
+
+
 def _do_delete_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
+    if (err := _require_lawfirm(namespace)):
+        return err
     opts = client.V1DeleteOptions(grace_period_seconds=0, propagation_policy="Background")
-    admin_core().delete_namespaced_pod(name, namespace, body=opts)
+    executor_core().delete_namespaced_pod(name, namespace, body=opts)
     return f"deleted pod/{name} in {namespace}"
 
 
 def _do_quarantine_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
-    core = admin_core()
+    if (err := _require_lawfirm(namespace)):
+        return err
+    core = executor_core()
     label_key = "hackutd/quarantine-target"
     try:
         core.patch_namespaced_pod(
@@ -222,7 +253,7 @@ def _do_quarantine_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
         ),
     )
     try:
-        admin_net().create_namespaced_network_policy(namespace, np)
+        executor_net().create_namespaced_network_policy(namespace, np)
     except ApiException as e:
         if e.status != 409:
             return f"error: {e.reason}"
@@ -230,20 +261,47 @@ def _do_quarantine_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
 
 
 def _do_delete_cronjob(name: str, namespace: str = config.LAWFIRM_NS) -> str:
+    if (err := _require_lawfirm(namespace)):
+        return err
     opts = client.V1DeleteOptions(grace_period_seconds=0, propagation_policy="Background")
-    admin_batch().delete_namespaced_cron_job(name, namespace, body=opts)
+    executor_batch().delete_namespaced_cron_job(name, namespace, body=opts)
     return f"deleted cronjob/{name} in {namespace}"
 
 
 def _do_revoke_service_account() -> str:
     opts = client.V1DeleteOptions(grace_period_seconds=0)
-    admin_rbac().delete_namespaced_role_binding("notebook-dev", config.LAWFIRM_NS, body=opts)
+    executor_rbac().delete_namespaced_role_binding("notebook-dev", config.LAWFIRM_NS, body=opts)
     return "deleted RoleBinding notebook-dev in lawfirm (stolen token can no longer act)"
 
 
 def _do_cordon_node(name: str) -> str:
-    admin_core().patch_node(name, {"spec": {"unschedulable": True}})
+    executor_core().patch_node(name, {"spec": {"unschedulable": True}})
     return f"cordoned node {name}"
+
+
+def verify_readonly_identity() -> str:
+    """Prove the agent's own identity cannot mutate the cluster: attempt a delete with the
+    read-only client and expect a 403 from RBAC. 404 (reached the not-found check) means the
+    identity is NOT read-only — the admin fallback, or an over-broad role. Logged as evidence."""
+    try:
+        agent_readonly_core().delete_namespaced_pod(
+            "readonly-selfcheck-does-not-exist", config.LAWFIRM_NS,
+            body=client.V1DeleteOptions(grace_period_seconds=0),
+        )
+        result, ok = "FAIL: read-only identity was allowed to delete (RBAC too broad)", False
+    except ApiException as e:
+        if e.status == 403:
+            result, ok = f"confirmed read-only: delete denied by RBAC (403 {e.reason})", True
+        elif e.status == 404:
+            result, ok = "NOT read-only: delete reached the API (404) — admin fallback or over-broad role", False
+        else:
+            result, ok = f"inconclusive: {e.status} {e.reason}", False
+    store.add_timeline(kind="system", actor="Detector",
+                       text=f"Agent identity self-check — {result}.",
+                       severity="info" if ok else "high")
+    _log_decision({"tool": "verify_readonly_identity", "mode": "self-check",
+                   "decision": "verified" if ok else "failed", "result": result})
+    return result
 
 
 _ASSET_STATUSES = {"clean", "investigating", "exfiltrated", "encrypted", "contained"}
@@ -364,6 +422,10 @@ def _dispatch(tool: str, args: dict) -> str:
             rationale=reason,
             policyReason=policy_reason,
             impact=_impact_for(tool, args),
+            rank=_runbook_for(tool)["rank"],
+            runbookRef=_runbook_for(tool)["runbookRef"],
+            risk=_runbook_for(tool)["risk"],
+            reversible=_runbook_for(tool)["reversible"],
             status="pending",
         )
         store.upsert_approval(approval)
@@ -675,6 +737,7 @@ def _check_exfil_evidence() -> None:
 
 async def detection_loop() -> None:
     """Background task: poll for threats, escalate new ones to Nemotron."""
+    await asyncio.to_thread(verify_readonly_identity)  # prove the agent's identity is read-only, once at startup
     while True:
         try:
             findings = await asyncio.to_thread(_detect)
@@ -701,3 +764,80 @@ async def detection_loop() -> None:
 def reset_detection_state() -> None:
     _handled.clear()
     pending_actions.clear()
+
+
+# ---------------------------------------------------------------------------
+# Metrics (judges asked for measurable outcomes) — derived from decisions.jsonl
+# ---------------------------------------------------------------------------
+_CONTAIN_TOOLS = {"delete_pod", "quarantine_pod", "delete_cronjob", "revoke_service_account", "cordon_node"}
+_DETECTION_CADENCE_S = 4  # the detection loop polls every 4 s (upper bound on detect latency)
+
+
+def _read_decisions() -> list[dict]:
+    if not config.DECISIONS_LOG.exists():
+        return []
+    out = []
+    for line in config.DECISIONS_LOG.read_text().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return out
+
+
+def _parse_ts(s):
+    try:
+        return datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def metrics() -> dict:
+    """Current-incident metrics, computed from the decision log. Everything is scoped to
+    decisions made since the incident was detected, so stale runs don't inflate it."""
+    rec = store.record
+    detected = _parse_ts(rec.detectedAt) if rec and rec.detectedAt else None
+    empty = {
+        "detectedAt": rec.detectedAt if rec else None, "firstContainedAt": None,
+        "timeToContainSeconds": None, "detectionCadenceSeconds": _DETECTION_CADENCE_S,
+        "containmentActions": {"autonomous": 0, "approved": 0, "total": 0},
+        "approvals": {"total": 0, "meanTimeToApproveSeconds": None}, "gpuHoursSaved": 0.0,
+    }
+    if detected is None:
+        return empty
+
+    decs = [d for d in _read_decisions()
+            if (ts := _parse_ts(d.get("ts"))) and ts >= detected]  # this incident only
+
+    contain = [d for d in decs if d.get("tool") in _CONTAIN_TOOLS
+               and d.get("decision") in ("executed", "approved")]
+    first_contain = _parse_ts(contain[0]["ts"]) if contain else None
+    autonomous = sum(1 for d in contain if d.get("mode") == "autonomous")
+    approved = sum(1 for d in contain if d.get("decision") == "approved")
+
+    # Pair each approval's pending timestamp with its decision timestamp to time the human.
+    pending = {d["approvalId"]: _parse_ts(d["ts"]) for d in decs
+               if d.get("decision") == "pending" and d.get("approvalId")}
+    waits = [(_parse_ts(d["ts"]) - pending[d["approvalId"]]).total_seconds()
+             for d in decs
+             if d.get("decision") in ("approved", "denied") and d.get("approvalId") in pending
+             and _parse_ts(d["ts"])]
+    mean_approve = round(sum(waits) / len(waits), 1) if waits else None
+
+    now = datetime.now(timezone.utc)
+    ttc = round((first_contain - detected).total_seconds(), 1) if first_contain else None
+    # ponytail: assume the miner pinned ~1 GPU at 100%; every hour since containment is one
+    # GPU-hour of mining prevented. Grows live. Upgrade: integrate real utilization over the window.
+    gpu_hours_saved = round((now - first_contain).total_seconds() / 3600, 2) if first_contain else 0.0
+
+    return {
+        "detectedAt": rec.detectedAt,
+        "firstContainedAt": contain[0]["ts"] if contain else None,
+        "timeToContainSeconds": ttc,
+        "detectionCadenceSeconds": _DETECTION_CADENCE_S,
+        "containmentActions": {"autonomous": autonomous, "approved": approved, "total": len(contain)},
+        "approvals": {"total": len(pending), "meanTimeToApproveSeconds": mean_approve},
+        "gpuHoursSaved": gpu_hours_saved,
+    }
