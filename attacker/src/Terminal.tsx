@@ -220,7 +220,13 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
   async function act(id: StepId) {
     setBusy(id); setErr(null);
     if (id !== "gain-access") setChosen(id); // commit to one attack; its logs replace the break-in logs
-    try { const r = await runStep(id); setSteps(r.attack); if (!r.ok) setErr(r.message); }
+    try {
+      // A break-in starts from a clean slate: reset restores the stolen token's permissions, so a
+      // revoke approved in a previous run doesn't leave the next attack dead on arrival (no pod, no
+      // logs, nothing to demo). gain-access is the first step of every run, so reset lives here.
+      if (id === "gain-access") { everAccessed.current = false; await resetAll(); setEntries([]); }
+      const r = await runStep(id); setSteps(r.attack); if (!r.ok) setErr(r.message);
+    }
     catch (e) { setErr(`Request failed: ${(e as Error).message}`); }
     finally { setBusy(null); refresh(); }
   }
@@ -231,11 +237,13 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
     catch (e) { setErr(`Reset failed: ${(e as Error).message}`); }
     finally { setBusy(null); refresh(); onClose(); }  // reset also closes the laptop
   }
-  // Leave a finished attack and re-open the four-attack picker, laptop still open and
-  // access still granted (no backend reset, no gain-access replay).
+  // "Run another attack": start a fresh break-in rather than reusing the old foothold. This
+  // resets the cluster (restoring the stolen token) and re-establishes access, so a revoke
+  // approved in the last run can't leave the next attack dead. The laptop stays open.
   function backToMenu() {
     setErr(null);
     setChosen(null);
+    act("gain-access");
   }
 
   const stepLabel = chosen

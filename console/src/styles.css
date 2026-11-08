@@ -212,7 +212,9 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
 .brand span { font-size: 12px; color: var(--muted); }
 /* White pill nav, as on zeroday.hackutd.co. */
 .nav { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: #fff; box-shadow: 0 0 0 1px var(--line); }
-.nav { max-width: 100%; overflow-x: auto; }
+/* Wrap the pill to a second row when the tabs don't fit (half-screen widths) instead of
+   clipping the last tab behind a hidden scroll. One row on desktop, unchanged. */
+.nav { max-width: 100%; flex-wrap: wrap; row-gap: 2px; }
 .nav a {
   white-space: nowrap;
   padding: 5px 12px; border-radius: 7px; text-decoration: none; color: #05070a;
