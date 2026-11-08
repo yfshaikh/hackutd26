@@ -69,6 +69,7 @@ function ApprovalCard({ a, first }: { a: Approval; first: boolean }) {
             {a.reversible !== undefined && <> · {a.reversible ? "reversible" : "not reversible"}</>}
             {a.target && <> · <span className="mono">{a.target}</span></>}
           </dd>
+          {a.paging && <><dt>On-call</dt><dd>{a.paging}</dd></>}
         </dl>
       )}
       {err && <p className="err" role="alert">{err}</p>}

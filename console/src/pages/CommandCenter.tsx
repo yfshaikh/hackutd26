@@ -5,15 +5,13 @@ import { Chat } from "../components/Chat";
 import { Scoreboard } from "../components/Scoreboard";
 import { DecisionBand } from "../components/DecisionBand";
 import { Framing } from "../components/Framing";
-import { IncidentRecord } from "../components/IncidentRecord";
 import { ScopeBoard } from "../components/ScopeBoard";
 import { Timeline } from "../components/Timeline";
 import { useLive } from "../context";
 
-// Cluster health lives on the Floor page, so it isn't duplicated as a side tab here.
+// The incident record has its own top-level page now (/record).
 const TABS = [
   { id: "scope", label: "Scope", Panel: ScopeBoard },
-  { id: "record", label: "Record", Panel: IncidentRecord },
   { id: "chat", label: "War room", Panel: Chat },
 ] as const;
 

@@ -21,6 +21,7 @@ dist/
 
 # Runtime output
 backend/logs/
+backend/data/
 *.log
 
 # Editor / OS / local tool state

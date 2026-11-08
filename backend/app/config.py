@@ -97,6 +97,29 @@ WEIGHTS_MOUNT_ALLOWLIST = ("model-server",)
 LOG_DIR = BACKEND_DIR / "logs"
 DECISIONS_LOG = LOG_DIR / "decisions.jsonl"
 
+# --- On-call paging: phone the on-call engineer when a human decision is needed --------
+# Cartesia's agents/calls API places ONE outbound call that reads a short summary of the
+# pending approval. The pager agent is talk-only: it has no path back into this backend, so
+# nothing said on the call can approve or change anything. The four keys it needs
+# (CARTESIA_API_KEY, CARTESIA_PAGER_AGENT_ID, CARTESIA_FROM_NUMBER_ID, ONCALL_PHONE) are
+# read fresh from os.environ by paging_settings() — never cached, logged, or committed.
+CARTESIA_CALLS = "https://api.cartesia.ai/agents/calls"
+CARTESIA_VERSION = "2026-08-14"
+PAGE_EVERY_SECONDS = 120  # at most one call per window, however many approvals fire
+
+
+def paging_on() -> bool:
+    """Whether a pending approval should phone the on-call engineer (off unless PAGING_ON=true)."""
+    return os.environ.get("PAGING_ON", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def paging_settings() -> dict[str, str]:
+    """The four keys a page needs, read at call time. The phone number is never logged."""
+    return {
+        key: os.environ.get(key, "").strip()
+        for key in ("CARTESIA_API_KEY", "CARTESIA_PAGER_AGENT_ID", "CARTESIA_FROM_NUMBER_ID", "ONCALL_PHONE")
+    }
+
 
 def nvidia_api_key() -> str | None:
     """Return the Nemotron key if set, else None. Never logs the value."""

@@ -51,6 +51,7 @@ export function TopBar() {
         <Link href="/">Command center</Link>
         <Link href="/floor">Floor</Link>
         <Link href="/evals">Evals</Link>
+        <Link href="/record">Incident</Link>
         {user?.role === "admin" && <Link href="/users">Users</Link>}
       </nav>
       <div className="topbar-right">

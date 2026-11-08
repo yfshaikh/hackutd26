@@ -1,7 +1,8 @@
 // The laptop screen, wired to the real backend. Boot lines, then the live attack transcript
-// (real code, HTTP calls, outputs over SSE) revealed one line at a time so it's readable.
+// (real code, HTTP calls, outputs over SSE) revealed one logical group at a time so it's readable.
 // Flow: break in (STEP 0) -> once the token is stolen, the four payloads appear UNDER the log;
-// pick ONE, its logs replace the break-in logs, the buttons hide, and you reset to choose again.
+// pick ONE, its logs replace the break-in logs, the buttons hide, and you can run another attack
+// (back to the picker) or reset to choose again.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { API, getRecon, getSteps, resetAll, runStep, streamTranscript } from "./api";
 import type { AttackStep, Entry, Recon, StepId } from "./api";
@@ -53,6 +54,39 @@ function entryNode(e: Entry): ReactNode {
   return <div className="ln out">{linkify(e.text)}</div>;
 }
 
+// One revealed line in the terminal, keeping the entry kind so we can group/reveal it.
+type Item = { key: string; kind: string; text: string; node: ReactNode };
+
+// Render the revealed lines, folding each run of code (with any interleaved note
+// comments) into one collapsed <details> so the scripts don't dominate the screen.
+function renderItems(items: Item[]): ReactNode[] {
+  const out: ReactNode[] = [];
+  let i = 0;
+  while (i < items.length) {
+    if (items[i].kind !== "code") {
+      out.push(<div key={items[i].key}>{items[i].node}</div>);
+      i++;
+      continue;
+    }
+    let last = i;
+    let j = i + 1;
+    while (j < items.length && (items[j].kind === "code" || items[j].kind === "note")) {
+      if (items[j].kind === "code") last = j;
+      j++;
+    }
+    const run = items.slice(i, last + 1);
+    const lines = run.reduce((n, it) => n + (it.kind === "code" ? it.text.split("\n").length : 1), 0);
+    out.push(
+      <details className="code-block" key={items[i].key}>
+        <summary>▸ code · {lines} lines</summary>
+        {run.map((it) => <div key={it.key}>{it.node}</div>)}
+      </details>,
+    );
+    i = last + 1;
+  }
+  return out;
+}
+
 const bootLines = (target?: string) => [
   { kind: "sys", text: "ZERO DAY OS 26.11 · HackUTD red team build" },
   { kind: "ok", text: "[ ok ] tailscale up  100.64.0.7" },
@@ -70,6 +104,7 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
   const [err, setErr] = useState<string | null>(null);
   const [chosen, setChosen] = useState<StepId | null>(null);
   const [reveal, setReveal] = useState(0);
+  const everAccessed = useRef(false);
   const logRef = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
 
@@ -95,18 +130,47 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
   const focusStep = chosen ?? "gain-access";
 
   // Lines in focus: boot preamble + break-in entries, OR just the chosen attack's entries.
-  const items = useMemo(() => {
+  const items = useMemo<Item[]>(() => {
     const real = entries.filter((e) => (chosen ? e.step === chosen : e.step === "gain-access" || e.step === ""));
-    const list: { key: string; node: ReactNode }[] = [];
-    if (!chosen) bootLines(recon?.target).forEach((b, i) => list.push({ key: "boot" + i, node: <div className={"ln " + b.kind}>{linkify(b.text)}</div> }));
-    real.forEach((e) => list.push({ key: e.id, node: entryNode(e) }));
+    const list: Item[] = [];
+    if (!chosen) bootLines(recon?.target).forEach((b, i) => list.push({ key: "boot" + i, kind: b.kind, text: b.text, node: <div className={"ln " + b.kind}>{linkify(b.text)}</div> }));
+    real.forEach((e) => list.push({ key: e.id, kind: e.kind, text: e.text, node: entryNode(e) }));
     return list;
   }, [entries, chosen, recon?.target]);
+
+  // Logical groups for the Next button: a note/cmd starts a group and absorbs the
+  // http/code/out lines under it, so a comment and the call it describes reveal together.
+  const groups = useMemo(() => {
+    const ends: number[] = [];
+    let i = 0;
+    while (i < items.length) {
+      if (items[i].kind === "note" || items[i].kind === "cmd") {
+        let j = i + 1;
+        while (j < items.length && items[j].kind !== "note" && items[j].kind !== "cmd") j++;
+        ends.push(j);
+        i = j;
+      } else {
+        ends.push(i + 1);
+        i++;
+      }
+    }
+    return ends;
+  }, [items]);
+
+  // Remember that access was granted at least once, so returning to the picker can
+  // skip the boot/break-in replay and show the menu immediately.
+  useEffect(() => { if (access) everAccessed.current = true; }, [access]);
 
   // The boot intro auto-plays; attack lines wait for the Next button so the operator can
   // read each one. Reset the reveal when the focus step changes or the lid closes.
   const BOOT_LEN = chosen ? 0 : bootLines().length;
-  useEffect(() => { setReveal(0); }, [focusStep]);
+  useEffect(() => {
+    // Returning from a finished attack: jump straight to the already-seen break-in log
+    // (and its settled "choose one attack" menu) instead of replaying it from zero.
+    if (everAccessed.current && access && !chosen) setReveal(items.length);
+    else setReveal(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusStep]);
   useEffect(() => { if (!booted) setReveal(0); }, [booted]);
   useEffect(() => {
     if (!booted || reveal >= BOOT_LEN) return;
@@ -115,9 +179,11 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
   }, [booted, reveal, BOOT_LEN]);
   const visible = items.slice(0, reveal);
   const pending = items.length - reveal;                      // unrevealed lines
+  const remainingGroups = groups.filter((end) => end > reveal).length; // unrevealed groups
   const stepping = booted && reveal >= BOOT_LEN && pending > 0; // past the intro, lines to step
   const settled = pending <= 0 && items.length > 0;
-  const advance = () => setReveal((c) => Math.min(items.length, c + 1));
+  // Reveal the next whole logical group (end index of the first group past the cursor).
+  const advance = () => setReveal((c) => groups.find((end) => end > c) ?? items.length);
 
   useEffect(() => { if (follow.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [visible.length]);
 
@@ -134,10 +200,17 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
     finally { setBusy(null); refresh(); }
   }
   async function reset() {
+    everAccessed.current = false;
     setBusy("reset"); setErr(null); setChosen(null);
     try { const r = await resetAll(); setSteps(r.attack); setEntries([]); }
     catch (e) { setErr(`Reset failed: ${(e as Error).message}`); }
     finally { setBusy(null); refresh(); onClose(); }  // reset also closes the laptop
+  }
+  // Leave a finished attack and re-open the four-attack picker, laptop still open and
+  // access still granted (no backend reset, no gain-access replay).
+  function backToMenu() {
+    setErr(null);
+    setChosen(null);
   }
 
   const stepLabel = chosen
@@ -173,7 +246,7 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
           onScroll={(ev) => { const el = ev.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
           aria-live="polite"
         >
-          {visible.map((it) => <div key={it.key}>{it.node}</div>)}
+          {renderItems(visible)}
           {access && !chosen && settled && <div className="ln big">ACCESS GRANTED</div>}
           {booted && !settled && <span className="caret" aria-hidden />}
         </div>
@@ -182,7 +255,7 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
       {connected && booted && (
         <div className="actions">
           {stepping ? (
-            <button className="act next-btn" onClick={advance}>Next&nbsp;▸{pending > 1 ? ` · ${pending} more` : ""}</button>
+            <button className="act next-btn" onClick={advance}>Next&nbsp;▸{remainingGroups > 1 ? ` · ${remainingGroups} more` : ""}</button>
           ) : !access ? (
             busy ? (
               <span className="act-head">exploiting…</span>
@@ -214,6 +287,7 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
           ) : (
             <>
               <span className="act-head ok">attack complete</span>
+              <button className="act" disabled={!!busy} onClick={backToMenu}>▸ run another attack</button>
               <button className="act ghost" disabled={busy === "reset"} onClick={reset}>⟲ reset &amp; close</button>
             </>
           )}

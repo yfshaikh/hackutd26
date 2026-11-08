@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useLive, useSession } from "../context";
 import { dateTime, clock } from "../format";
 import { canEditRecord, incidentStatus, PHASES } from "../labels";
+import type { IncidentRecord as IncidentRecordData } from "../types";
 import { Empty, NoData, NoIncident } from "./Empty";
 import { BreachCountdown } from "./BreachCountdown";
 import { RecordEditor } from "./RecordEditor";
@@ -26,12 +27,24 @@ function List({ items }: { items: string[] }) {
   );
 }
 
-export function IncidentRecord() {
+export function IncidentRecord({
+  record: supplied,
+  readOnly = false,
+  showActions = true,
+}: {
+  /** Show this record instead of the live one (e.g. an archived incident). */
+  record?: IncidentRecordData | null;
+  /** Archived records are read-only: hide the editor and PDF controls. */
+  readOnly?: boolean;
+  /** The Incident page renders actions in its own prominent panel, so hide the field here. */
+  showActions?: boolean;
+} = {}) {
   const { snapshot, connection, apply } = useLive();
   const { user } = useSession();
   const [editing, setEditing] = useState(false);
-  const r = snapshot?.record ?? null;
-  const canEdit = canEditRecord(user?.role);
+  const live = snapshot?.record ?? null;
+  const r = supplied === undefined ? live : supplied;
+  const canEdit = !readOnly && canEditRecord(user?.role);
 
   return (
     <section className="panel" aria-labelledby="rec-h">
@@ -44,7 +57,7 @@ export function IncidentRecord() {
               {editing ? "Close editor" : "Edit record"}
             </button>
           )}
-          {r && !editing && (
+          {r && !editing && !readOnly && (
             <button className="btn no-print" onClick={() => window.print()} title="Print or save as PDF">
               Export PDF
             </button>
@@ -52,7 +65,7 @@ export function IncidentRecord() {
         </div>
       </div>
 
-      {!snapshot ? (
+      {!snapshot && supplied === undefined ? (
         <NoData connection={connection} what="The incident record" />
       ) : !r ? (
         <NoIncident />
@@ -65,7 +78,7 @@ export function IncidentRecord() {
       ) : (
         <>
           <div className="print-only print-head">
-            <strong>NMC operator console · Client: {snapshot.firm}</strong>
+            <strong>NMC operator console · Client: {snapshot?.firm ?? "Client incident response"}</strong>
             <span>NIST SP 800-61 incident record · exported {dateTime(new Date().toISOString())}</span>
           </div>
           <div className="record-title">
@@ -120,18 +133,20 @@ export function IncidentRecord() {
                 />
               </dd>
             </div>
-            <Field label="Actions taken" empty={r.actionsTaken.length === 0}>
-              <ol>
-                {r.actionsTaken.map((a, i) => (
-                  <li key={i}>
-                    {a.text}
-                    <div className="act-meta">
-                      {clock(a.ts)}, {a.by}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </Field>
+            {showActions && (
+              <Field label="Actions taken" empty={r.actionsTaken.length === 0}>
+                <ol>
+                  {r.actionsTaken.map((a, i) => (
+                    <li key={i}>
+                      {a.text}
+                      <div className="act-meta">
+                        {clock(a.ts)}, {a.by}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </Field>
+            )}
             <Field label="Next steps" empty={r.nextSteps.length === 0}>
               <ol>
                 {r.nextSteps.map((s, i) => (
@@ -155,7 +170,7 @@ export function IncidentRecord() {
           </p>
         </>
       )}
-      {snapshot && r && !editing && r.actionsTaken.length === 0 && r.affectedSystems.length === 0 && (
+      {snapshot && r && !editing && !readOnly && r.actionsTaken.length === 0 && r.affectedSystems.length === 0 && (
         <Empty title="Record opened">Fields fill in as agents and responders act.</Empty>
       )}
     </section>

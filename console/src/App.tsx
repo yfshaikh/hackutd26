@@ -4,6 +4,7 @@ import { Empty } from "./components/Empty";
 import { LiveProvider, SessionProvider, useSession } from "./context";
 import { CommandCenter } from "./pages/CommandCenter";
 import { Evals } from "./pages/Evals";
+import { IncidentPage } from "./pages/IncidentPage";
 import { Login } from "./pages/Login";
 import { Users } from "./pages/Users";
 import { navigate, usePath } from "./router";
@@ -17,6 +18,7 @@ const TITLES: Record<string, string> = {
   "/": "Operator console",
   "/floor": "Floor",
   "/evals": "Evaluations",
+  "/record": "Incident record",
   "/users": "Users & roles",
   "/attack": "Attacker workstation",
 };
@@ -43,6 +45,8 @@ function Signed({ path }: { path: string }) {
           <Users />
         ) : path === "/evals" ? (
           <Evals />
+        ) : path === "/record" ? (
+          <IncidentPage />
         ) : path === "/floor" ? (
           <Suspense fallback={<Empty title="Loading the floor…" />}>
             <FloorPage />

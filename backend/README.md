@@ -31,8 +31,7 @@ needs no sign-in.
 ### `backend/.env` template
 
 Create `backend/.env` yourself (it is git-ignored and must never be committed).
-The repo cannot ship a `.env.example` because the environment blocks writing any
-`.env*` path, so copy this:
+`backend/.env.example` documents the on-call paging keys; the rest is this template:
 
 ```dotenv
 # Nemotron, through either provider (both are OpenAI-compatible). Set ONE key.
@@ -56,6 +55,14 @@ KUBECONFIG=/Users/yusufshaikh/.kube/hackutd.yaml
 
 # Console origin for CORS-with-credentials.
 CONSOLE_ORIGIN=http://localhost:5173
+
+# On-call paging (optional). One Cartesia call when an approval needs a human.
+# The pager agent is talk-only: it cannot approve or change anything.
+CARTESIA_API_KEY=
+CARTESIA_PAGER_AGENT_ID=
+CARTESIA_FROM_NUMBER_ID=
+ONCALL_PHONE=+15125551234
+PAGING_ON=false
 ```
 
 The backend loads this with `load_dotenv()` at startup and only ever reads
@@ -70,6 +77,7 @@ Nemotron key is never logged — only whether it is set.
 | `app/config.py` | Runtime config via `python-dotenv`; namespaces/names from the deploy manifest; `nvidia_api_key()` accessor. |
 | `app/models.py` | Pydantic models mirroring `console/src/types.ts` exactly (camelCase = the wire contract). |
 | `app/hub.py` | In-memory state store + SSE event hub. All mutators publish the matching `ServerEvent`; builds the `Snapshot`. |
+| `app/notify.py` | On-call pager: one Cartesia call when a pending approval first appears, on a background thread, with `spoken()` sanitising every field it reads out. |
 | `app/auth.py` | Session-cookie auth, in-memory users, `hashlib.scrypt` password hashing, role dependencies. |
 | `app/k8s.py` | Admin Kubernetes client (`admin()`) for snapshot + defender actions, plus a websocket exec helper. (The attacker no longer uses a Python client — it runs inside the pod; see `jupyter.py`.) |
 | `app/cluster.py` | Builds the real `Cluster` (nodes, cordon, pods+owner+quarantine) and GPU metrics from `nvidia-smi`; seeds the protected assets. |

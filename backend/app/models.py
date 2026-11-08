@@ -140,6 +140,9 @@ class Approval(BaseModel):
     status: ApprovalStatus
     decidedBy: Optional[str] = None
     decidedAt: Optional[str] = None
+    # What the on-call pager did for this approval: "call placed: <id>", "call failed: <type>",
+    # or "not called: <reason>". Optional so older callers still validate; never holds the number.
+    paging: Optional[str] = None
 
 
 class RecordAction(BaseModel):

@@ -21,8 +21,9 @@ READING MAP (sections in order, top to bottom):
   8. Approval + dispatch    run_tool_approved / _dispatch — the gate: needs-approval
                             actions become pending; autonomous ones run now.
   9. Nemotron agents        _tool_schemas, the three role prompts, _run_role() and
-                            run_agent() — the Triage->Investigator->Advisor pipeline;
-                            code checks classify() before every call the Advisor makes.
+                            run_agent() — the Triage->Investigator->Advisor pipeline, the
+                            hypothesis-driven Investigator, and the bounded
+                            verify-and-reconverge pass after the Advisor contains.
  10. Detection              _detect / _check_exfil_evidence / detection_tick /
                             detection_loop — what fires the agent, every 4s.
  11. Metrics                metrics() — current-incident outcomes from the log.
@@ -33,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -743,21 +745,43 @@ TRIAGE_PROMPT = _SCENARIO + (
 )
 
 INVESTIGATOR_PROMPT = _SCENARIO + (
-    "You are the INVESTIGATOR (forensics). Using the read tools (describe_pod, get_pod_logs, "
-    "list_pods, gpu_status), determine the SCOPE: which of the assets model-weights, training, "
-    "notebook, node were touched, and whether there is evidence of exfiltration or persistence "
-    "(a CronJob). Record what you find with update_scope using exactly those asset ids and a status "
-    "of clean|investigating|exfiltrated|encrypted|contained. Do NOT contain anything — no deleting, "
-    "quarantining or revoking.\n\n"
+    "You are the INVESTIGATOR (forensics). Do NOT run a fixed read script — YOU decide the workflow. "
+    "But you MUST actually investigate: your FIRST action is a tool call (start with list_pods, then "
+    "describe_pod and get_pod_logs on the suspicious pod), NEVER prose. Do not state a conclusion or hand "
+    "off until you have read the suspicious pod's details and logs with the tools — a hypothesis is not "
+    "evidence. Each round, work like a detective:\n\n"
+    "1) COMPETING HYPOTHESES: name what this incident could be before you dig — at minimum "
+    "cryptojacking/mining, data exfiltration, persistence/backdoor, and lateral movement. Hold every "
+    "one that is still plausible; drop a hypothesis only when evidence rules it out. More than one "
+    "may be true at once.\n"
+    "2) NEXT DISCRIMINATING TOOL: choose the single next read (list_pods, describe_pod, get_pod_logs, "
+    "gpu_status) that best separates the live hypotheses. In your reasoning, say which hypothesis the "
+    "call is meant to confirm or rule out. The next tool must depend on what the last result showed — "
+    "never a stock sequence.\n"
+    "3) BEGIN EACH ROUND with a one-line state in your reasoning, exactly in this form:\n"
+    "   HYPOTHESES: mining=<likely|possible|ruled out>; exfil=<...>; persistence=<...>; lateral=<...>\n"
+    "   then branch on the evidence:\n"
+    "   - GPU pinned ~100% + an unowned GPU pod and no egress -> MINING branch: describe the pod and "
+    "     read its logs to confirm the miner command/image and GPU draw; size the impact.\n"
+    "   - Bytes leaving, or a non-model-server pod mounting the weights PVC -> EXFIL branch: find where "
+    "     it went (drop site) and what else the stolen token touched.\n"
+    "   - A non-allowlisted CronJob -> PERSISTENCE branch: find what it recreates and how (schedule, "
+    "     command, and the pods/jobs it owns).\n"
+    "   - Unexpected cross-namespace or RBAC access -> LATERAL MOVEMENT branch: scope what the token "
+    "     can reach.\n"
+    "4) SCOPE: record each resolved branch with update_scope, using exactly the asset ids model-weights, "
+    "training, notebook, node and a status of clean|investigating|exfiltrated|encrypted|contained. Put "
+    "the evidence in the note.\n\n"
     "Everything relevant is in the 'lawfirm' namespace — the tools already default there, so do not "
     "inspect other namespaces. You have a limited number of tool rounds: be decisive, batch your "
     "lookups, and do not re-check something you already saw.\n\n"
-    "ENRICH with external services: call lookup_cve to identify the REAL CVE for the exploited vector "
-    "(the exposed, unauthenticated notebook/Ray dashboard — the ShadowRay bug) and mining_impact to "
-    "get the live Monero price and the $/hour of stolen GPU compute. Include the CVE id + CVSS and the "
-    "$ impact in your handoff so the Advisor can record them.\n\n"
-    "Finish with a handoff to the Advisor: the confirmed scope, the CVE + impact, the likely root "
-    "cause, and the containment actions needed in priority order. Be terse."
+    "ENRICH inside the relevant branch: call lookup_cve to identify the REAL CVE for the exploited "
+    "vector (the exposed, unauthenticated notebook/Ray dashboard — the ShadowRay bug) and mining_impact "
+    "to get the live Monero price and the $/hour of stolen GPU compute. Include the CVE id + CVSS and "
+    "the $ impact in your handoff so the Advisor can record them.\n\n"
+    "Do NOT contain anything — no deleting, quarantining or revoking.\n\n"
+    "Finish with a handoff to the Advisor: the confirmed hypothesis set in priority order, the evidence "
+    "for each, the confirmed scope, the CVE + impact, and the containment actions needed. Be terse."
 )
 
 # Used when the Advisor asks the Investigator a mid-response follow-up (the two-way exchange).
@@ -831,8 +855,35 @@ def _consult(oai, question: str) -> str:
     return answer or "(the Investigator found nothing further)"
 
 
+_HYPOTHESIS_PREFIX = "HYPOTHESES:"
+
+
+def _log_hypothesis_state(role: str, reasoning: str) -> None:
+    """Spec 05 (visible branching): surface the Investigator's one-line hypothesis state in its
+    trace each round, so the console can watch it narrow in ("mining=likely; exfil=ruled out").
+    The prompt asks for an explicit HYPOTHESES: line; if the model omits one, fall back to the
+    first line of its round reasoning so the trace still shows the decision. Trace-only: this is
+    investigative colour, not main-timeline story."""
+    if role != INVESTIGATOR or not reasoning:
+        return
+    line = next((ln.strip() for ln in reasoning.splitlines()
+                 if ln.strip().upper().startswith(_HYPOTHESIS_PREFIX)), "")
+    if not line:
+        lines = [ln.strip() for ln in reasoning.splitlines() if ln.strip()]
+        if not lines:
+            return
+        line = lines[0]
+    if len(line) > 240:
+        line = line[:237] + "..."
+    store.add_timeline(
+        kind="agent", actor=_AGENT_NAME[role], agent=role, severity="info",
+        text=line, trace_only=True,
+    )
+
+
 def _run_role(oai, *, role: str, model: str, system_prompt: str,
-              allowed: set[str], context: str, rounds: int = 6) -> str:
+              allowed: set[str], context: str, rounds: int = 6,
+              log_hypotheses: bool = False) -> str:
     """Run ONE agent as a Nemotron tool-loop to completion and return its final text (the
     handoff to the next stage). Same loop mechanics for all three; the role differs only in
     its prompt, which tools it may call, and which model runs it.
@@ -877,6 +928,8 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
         # Carry this round's real model reasoning onto the actions it triggers. Some Nemotron
         # deployments surface it as reasoning_content rather than content.
         _round_reasoning = (msg.content or "").strip() or (getattr(msg, "reasoning_content", "") or "").strip()
+        if tool_calls and log_hypotheses:
+            _log_hypothesis_state(role, _round_reasoning)
         messages.append({
             "role": "assistant",
             "content": msg.content or "",
@@ -961,23 +1014,81 @@ def run_agent(trigger: str) -> None:
     )
     _handoff(TRIAGE, INVESTIGATOR, triage)
 
-    # 2) Investigator — fast model, scope only.
+    # 2) Investigator — fast model, scope only. Hypothesis-driven: its next tool depends on
+    #    what the last result showed, and each round's hypothesis state is surfaced in its trace.
     inv = _run_role(
         oai, role=INVESTIGATOR, model=config.NEMOTRON_FAST_MODEL, system_prompt=INVESTIGATOR_PROMPT,
         allowed=_INVESTIGATOR_TOOLS, rounds=8,  # scope 4 assets + CVE + mining impact needs the room
-        context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\nDetermine the scope, then hand off to the Advisor.",
+        log_hypotheses=True,
+        context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\nForm your hypotheses, decide the "
+        "next discriminating read each round, then hand off to the Advisor.",
     )
     _handoff(INVESTIGATOR, ADVISOR, inv)
 
     # 3) Advisor — heavy model, the only stage that contains. It sees what is already awaiting a
     #    human so it does not re-propose a decision that is already on the operator's queue.
-    _run_role(
+    advisor_summary = _run_role(
         oai, role=ADVISOR, model=config.NEMOTRON_MODEL, system_prompt=ADVISOR_PROMPT,
         allowed=_ADVISOR_TOOLS, rounds=8,
         context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\n"
         f"Investigator findings:\n{inv or '(none)'}\n\n{_pending_summary()}\n\n"
         "Propose and execute the ranked remediation now.",
     )
+
+    # 4) Verify-and-reconverge — the Advisor checks its own work. Deleting a miner pod is not
+    #    enough while a CronJob keeps recreating it, so re-observe the live cluster (read-only)
+    #    and, if anything rogue survived, run the Advisor once more against exactly those
+    #    residual findings. Bounded to _MAX_VERIFY_PASSES so this can never loop; the background
+    #    detection_loop still re-checks every 4 s afterwards. Re-acting goes through the same
+    #    classify()/_dispatch gate, and _approval_sig de-dup stops a second revoke card.
+    reacted_again = False
+    for attempt in range(1, _MAX_VERIFY_PASSES + 1):
+        store.add_timeline(
+            kind="agent", actor=_AGENT_NAME[ADVISOR], agent=ADVISOR, severity="info",
+            text="Verifying containment — re-observing the live cluster…",
+        )
+        residual = _detect_settled()
+        if not residual:
+            store.add_timeline(
+                kind="agent", actor=_AGENT_NAME[ADVISOR], agent=ADVISOR, severity="info",
+                text=("Re-contained: rogue work respawned after the first pass; removed again. "
+                      "Confirmed: all rogue workloads cleared." if reacted_again
+                      else "Confirmed: all rogue workloads cleared."),
+            )
+            break
+        detail = "; ".join(text for _, text in residual)
+        if attempt == _MAX_VERIFY_PASSES:
+            # Out of in-run passes: hand the residual state to the background detector instead of
+            # looping. It escalates anything genuinely new on its next tick.
+            store.add_timeline(
+                kind="system", actor="Detector", severity="high",
+                text=(f"Verify pass {attempt}/{_MAX_VERIFY_PASSES}: rogue state still present — "
+                      f"leaving it to the background detector: {detail}"),
+            )
+            break
+        reacted_again = True
+        store.add_timeline(
+            kind="agent", actor=_AGENT_NAME[ADVISOR], agent=ADVISOR, severity="high",
+            text=f"Verification found residual rogue state — re-converging: {detail}",
+        )
+        # Fresh read of the live cluster for the follow-up: the first pass's `base` is stale.
+        verify_base = (
+            f"Detection trigger: {trigger}\n\n"
+            f"Current lawfirm pods (re-read after your first containment pass):\n{_do_list_pods()}\n\n"
+            f"GPU: {_do_gpu_status()}\n"
+        )
+        _run_role(
+            oai, role=ADVISOR, model=config.NEMOTRON_MODEL, system_prompt=ADVISOR_PROMPT,
+            allowed=_ADVISOR_TOOLS, rounds=6,
+            context=verify_base + f"\nTriage assessment:\n{triage or '(none)'}\n\n"
+            f"Investigator findings:\n{inv or '(none)'}\n\n"
+            f"Your earlier containment pass ended with:\n{advisor_summary or '(none)'}\n\n"
+            f"VERIFY FINDINGS — these rogue objects are STILL present after your first pass:\n{detail}\n\n"
+            f"{_pending_summary()}\n\n"
+            "Clear these residual findings now: remove what recreates the work (e.g. the CronJob) AND "
+            "the objects it already spawned. Do not re-propose an action that is already awaiting a "
+            "human. When done, stop calling tools and summarize.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1034,6 +1145,30 @@ def _detect() -> list[tuple[str, str]]:
     )
     if total >= 80 and rogue_gpu:
         findings.append(("gpu-spike", f"GPU utilization {total:.0f}% driven by an unknown pod."))
+    return findings
+
+
+# Verify-and-reconverge bounds (Spec 06). At most 2 re-observations per run; the background
+# detection_loop remains the unbounded 4 s safety net, so the in-run pass never competes with it.
+_MAX_VERIFY_PASSES = 2
+_VERIFY_SETTLE_ATTEMPTS = 3
+_VERIFY_SETTLE_S = 0.4
+
+
+def _detect_settled() -> list[tuple[str, str]]:
+    """Re-observe after containment, giving in-flight deletions a moment to settle.
+
+    A pod deleted with grace 0 can linger in the API for a beat and nvidia-smi can read busy a
+    moment after its miner dies. Without a short settle, a simple miner deletion would look like
+    residual rogue state and trigger a pointless second Advisor pass. A clean observation wins
+    immediately; otherwise we re-poll up to _VERIFY_SETTLE_ATTEMPTS times and return the last read.
+    """
+    findings = _detect()
+    for _ in range(_VERIFY_SETTLE_ATTEMPTS - 1):
+        if not findings:
+            return findings
+        time.sleep(_VERIFY_SETTLE_S)
+        findings = _detect()
     return findings
 
 

@@ -15,6 +15,8 @@ import type {
   ConnectionState,
   EvalsResults,
   EvalsRunStatus,
+  IncidentHistoryDetail,
+  IncidentHistoryItem,
   IncidentRecord,
   IncidentRecordPatch,
   NewUser,
@@ -102,6 +104,15 @@ export const sendMessage = (text: string) => post<TimelineEntry>("/messages", { 
 
 export const getRecord = () => request<IncidentRecord | null>("/incident/record");
 export const patchRecord = (body: IncidentRecordPatch) => patch<IncidentRecord>("/incident/record", body);
+
+/**
+ * Past incidents, newest first (Spec 03). A separate read path from the live store:
+ * this only exists once the backend has banked a resolved/reset incident. Callers
+ * treat a failure as "no history yet" rather than an error.
+ */
+export const listIncidents = () => request<IncidentHistoryItem[]>("/incidents");
+export const getIncident = (id: string) =>
+  request<IncidentHistoryDetail>(`/incidents/${encodeURIComponent(id)}`);
 
 export const getScope = () => request<Asset[]>("/incident/scope");
 export const patchScope = (assetId: string, status: AssetStatus, note?: string) =>

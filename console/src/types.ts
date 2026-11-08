@@ -139,6 +139,8 @@ export interface Approval {
   status: ApprovalStatus;
   decidedBy?: string;
   decidedAt?: ISODate;
+  /** What the on-call pager did: "call placed: <id>", "call failed: <type>", "not called: <reason>". */
+  paging?: string;
 }
 
 /** NIST SP 800-61 lifecycle phases. */
@@ -240,6 +242,31 @@ export interface User {
   email: string;
   role: Role;
   createdAt: ISODate;
+}
+
+// ---- WS-C/Spec 03: archived incidents (GET /incidents) -------------------
+//
+// The history path is separate from the live store: these rows are banked by the
+// backend when an incident resolves or a reset clears it. Summary fields only in
+// the list; the detail carries the full record and timeline back.
+
+/** One archived incident, as returned by `GET /incidents` (newest first). */
+export interface IncidentHistoryItem {
+  id: string;
+  title: string;
+  status: IncidentStatus;
+  severity: Severity;
+  /** SQLite columns are snake_case on this read path, unlike the rest of the API. */
+  detected_at: string | null;
+  resolved_at: string | null;
+}
+
+/** `GET /incidents/{id}` — the summary plus the full parsed record and timeline. */
+export interface IncidentHistoryDetail extends IncidentHistoryItem {
+  vector: string | null;
+  record: IncidentRecord;
+  timeline: TimelineEntry[];
+  created_at: string;
 }
 
 export type AttackStepId = "gain-access" | "start-miner" | "steal-weights" | "persistence" | "ddos";

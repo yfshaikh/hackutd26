@@ -32,7 +32,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import attacks, config, defender
+from . import attacks, config, db, defender
 from .auth import COOKIE_NAME, auth, current_user, require_roles
 from .cluster import build_cluster, read_gpus, seed_assets
 from .hub import store
@@ -178,6 +178,22 @@ async def events(request: Request, user: User = Depends(current_user)) -> Stream
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+# ---- Incident history (past incidents, archived on resolve/reset) ---------
+@app.get("/incidents")
+def list_incidents(user: User = Depends(current_user)) -> list[dict]:
+    """Newest first; summary fields only. Backed by SQLite, not the live store."""
+    return db.list_incidents()
+
+
+@app.get("/incidents/{incident_id}")
+def get_incident(incident_id: str, user: User = Depends(current_user)) -> dict:
+    """One archived incident with its full record + timeline."""
+    incident = db.get_incident(incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="No such incident")
+    return incident
 
 
 # ---- Approvals ------------------------------------------------------------

@@ -128,6 +128,16 @@ button { font: inherit; color: inherit; }
 .ln.note { color: var(--pink); } .ln.note::before { content: "# "; opacity: .7; }
 .ln.cmd { color: var(--ink); } .ln.cmd::before { content: "$ "; color: var(--purple); font-weight: 600; }
 .ln.code { color: var(--lav); opacity: .9; border-left: 2px solid rgba(120, 40, 255, .6); padding-left: 8px; margin: 2px 0; }
+/* collapsed runs of code (native <details>) — dim frame, Zero Day palette */
+.code-block { margin: 4px 0; border: 1px solid rgba(219, 196, 255, .16); border-radius: 4px;
+  background: rgba(120, 40, 255, .06); overflow: hidden; }
+.code-block > summary { cursor: pointer; list-style: none; padding: 3px 8px; color: var(--lav);
+  font-size: 11px; letter-spacing: .04em; user-select: none; }
+.code-block > summary::-webkit-details-marker { display: none; }
+.code-block > summary:hover { background: rgba(120, 40, 255, .14); color: var(--ink); }
+.code-block[open] > summary { border-bottom: 1px solid rgba(219, 196, 255, .12); margin-bottom: 4px; }
+.code-block .ln { padding: 0 8px; }
+.code-block .ln.code { border-left: 0; padding-left: 8px; margin: 0; }
 .ln.http { color: var(--cyan); }
 .ln.out { color: #cfcbe6; }
 .ln.ok { color: var(--green); font-weight: 600; }

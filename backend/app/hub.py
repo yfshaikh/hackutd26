@@ -1,8 +1,11 @@
 """In-memory state store + Server-Sent-Events hub.
 
-This is the backend's memory. There's no database: the whole demo's state (cluster snapshot,
+This is the backend's memory. Nearly the whole demo's state (cluster snapshot,
 timeline, assets, incident record, approvals, attack-step progress) lives in one `Store`
-object in RAM, and is lost on restart — which is fine for a hackathon demo.
+object in RAM, and is lost on restart — which is fine for a hackathon demo. The one
+exception is history: when an incident is resolved (or a reset banks it), it is copied to
+SQLite via `db.py` so past incidents survive a restart. The live store never reads back
+from that history.
 
 "Server-Sent Events" (SSE) is a simple one-way stream: the browser opens a long-lived HTTP
 connection and the server pushes text lines down it as things happen. That's how the console
@@ -16,11 +19,12 @@ publishing is a plain, non-locking fan-out to subscriber queues.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections import deque
 from typing import Any, Optional
 
-from . import config
+from . import config, db, notify
 from .models import (
     Approval,
     Asset,
@@ -33,6 +37,8 @@ from .models import (
 )
 
 GPU_HISTORY_LEN = 90  # ~3 min at one sample / 2 s
+
+log = logging.getLogger(__name__)
 
 
 # --- Attack step state machine --------------------------------------------
@@ -202,14 +208,49 @@ class Store:
         return self.upsert_asset(asset)
 
     def upsert_approval(self, approval: Approval) -> Approval:
+        # Page the on-call engineer once, when a pending approval FIRST appears. Later
+        # upserts are decisions (status changed) or the paging outcome, so they must not
+        # re-page. The call runs on its own thread and swallows its errors: a phone problem
+        # never blocks filing the approval or the detection loop.
+        first_pending = approval.status == "pending" and approval.id not in self.approvals
         self.approvals[approval.id] = approval
         self.publish({"type": "approval", "approval": approval.model_dump(exclude_none=True)})
+        if first_pending:
+            notify.page_oncall_soon(approval, self.record)
         return approval
+
+    def set_approval_paging(self, approval_id: str, result: str) -> None:
+        """Record how the on-call page went on the approval, if it is still in the live store.
+
+        Deliberately not an upsert: a page can finish after a reset cleared the approvals,
+        and re-adding a cleared approval would resurrect it.
+        """
+        approval = self.approvals.get(approval_id)
+        if approval is None:
+            return
+        approval.paging = result
+        self.publish({"type": "approval", "approval": approval.model_dump(exclude_none=True)})
 
     def set_record(self, record: IncidentRecord | None) -> None:
         self.record = record
+        if record is not None and record.status == "resolved":
+            self.archive_incident()
         payload = record.model_dump(exclude_none=True) if record else None
         self.publish({"type": "record", "record": payload})
+
+    def archive_incident(self) -> None:
+        """Bank the current record + timeline into the history DB (best-effort).
+
+        Called when an incident leaves the live state: `set_record` sees status →
+        resolved, or `reset_incident_state` clears it. A history write must never
+        break the detection loop, so failures are logged and swallowed.
+        """
+        if self.record is None:
+            return
+        try:
+            db.archive(self.record, self.timeline)
+        except Exception:  # noqa: BLE001
+            log.exception("Could not archive incident %s", self.record.id)
 
     def set_cluster(self, cluster: Cluster) -> None:
         self.cluster = cluster
@@ -228,8 +269,10 @@ class Store:
 
     def reset_incident_state(self) -> None:
         # Wipe the incident back to a blank slate and relock the attack chain.
+        # Bank it first, so a reset doesn't erase the incident from history.
         # NOTE: this empties assets; callers that want scope back must re-seed it
         # (cluster.seed_assets() + upsert_asset), since this does not.
+        self.archive_incident()
         self.timeline.clear()
         self.assets.clear()
         self.approvals.clear()
