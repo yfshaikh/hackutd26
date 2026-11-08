@@ -12,12 +12,14 @@
   --red: #ff5c7c;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
   --display: "Chakra Petch", system-ui, sans-serif;
-  /* Laptop size scales with the viewport so it stays readable at half-screen widths
-     (two apps side by side). The open terminal zooms to fill the window, and --w sets
-     how much content fits, so keep it large until the screen is genuinely phone-sized. */
-  --w: min(640px, 92vw);  /* laptop width */
-  --lid: calc(var(--w) * 0.625);  /* lid height */
-  --deck: calc(var(--w) * 0.67);  /* keyboard deck depth */
+  /* Laptop dimensions. These MUST stay plain px: zoomPose() in App.tsx parseFloats them
+     to size the open terminal, and a min()/calc() value reads back as NaN there, breaking
+     the zoom (the laptop then floats tiny instead of filling the window). --w also sets how
+     much content the terminal fits, so it stays large (640) down to tablet width so the
+     terminal is readable at half-screen, dropping to a phone size only below 560px. */
+  --w: 640px;      /* laptop width */
+  --lid: 400px;    /* lid height */
+  --deck: 430px;   /* keyboard deck depth */
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -219,7 +221,8 @@ code { font-family: var(--mono); color: var(--ink); }
   .rig, .lid { transition-duration: .01s; }
   .app.open .keys i, .caret, .app.booting .flash { animation: none; }
 }
-@media (max-width: 520px) {
-  /* genuinely phone-sized: --w already tracks 92vw; just shrink the chrome */
+@media (max-width: 560px) {
+  /* genuinely phone-sized: shrink the laptop and chrome (half-screen widths stay at 640) */
+  :root { --w: 360px; --lid: 240px; --deck: 250px; }
   .keys i { height: 16px; } .trackpad { width: 120px; height: 60px; } .title h1 { font-size: 22px; }
 }
