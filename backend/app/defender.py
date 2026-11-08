@@ -471,6 +471,22 @@ def _summarize_call(tool: str, args: dict) -> str:
     return f"{tool}({inner})"
 
 
+def _approval_sig(tool: str, args: dict) -> tuple:
+    """Identity of a proposed action, for de-duping approvals: same tool + same target is the
+    same request. revoke_service_account takes no args, so its signature is just the tool name —
+    which is exactly why two Advisor runs would otherwise file it twice."""
+    return (tool, _TOOL_TARGET(args) or json.dumps(args or {}, sort_keys=True))
+
+
+def _pending_summary() -> str:
+    """One line listing actions already awaiting a human, so the Advisor can SEE current decisions
+    and not re-propose them. Fed into the Advisor's context at the start of its run."""
+    if not pending_actions:
+        return "No actions are currently awaiting human approval."
+    items = "; ".join(f"{_summarize_call(t, a)} ({aid})" for aid, (t, a, _) in pending_actions.items())
+    return f"Already awaiting human approval — do NOT propose these again: {items}."
+
+
 def _pod_logs_for(tool: str, args: dict) -> str | None:
     """Relevant pod logs for a pod-targeting tool (Task 3). Read before deletion."""
     if tool not in ("delete_pod", "quarantine_pod"):
@@ -517,6 +533,17 @@ def _dispatch(tool: str, args: dict) -> str:
     mode, reason, policy_reason = classify(tool, args)
 
     if mode == "needs-approval":
+        # Idempotent approvals: if an identical action is already awaiting a human, do NOT file a
+        # second request — point the agent at the existing one. The Advisor can run more than once
+        # per incident (one run per detection cycle), and revoke_service_account takes no args, so
+        # without this it gets proposed once per run and the operator sees duplicate cards.
+        sig = _approval_sig(tool, args)
+        dup = next((aid for aid, (t, a, _) in pending_actions.items() if _approval_sig(t, a) == sig), None)
+        if dup:
+            _log_decision({"tool": tool, "args": args, "mode": "needs-approval",
+                           "decision": "duplicate-suppressed", "approvalId": dup})
+            return (f"POLICY: '{tool}' is ALREADY pending human approval ({dup}). A second request "
+                    f"was NOT created. Do not propose it again; continue with other containment.")
         approval = Approval(
             id=f"ap-{uuid.uuid4().hex[:8]}",
             requestedAt=now_iso(),
@@ -722,6 +749,9 @@ INVESTIGATOR_PROMPT = _SCENARIO + (
     "(a CronJob). Record what you find with update_scope using exactly those asset ids and a status "
     "of clean|investigating|exfiltrated|encrypted|contained. Do NOT contain anything — no deleting, "
     "quarantining or revoking.\n\n"
+    "Everything relevant is in the 'lawfirm' namespace — the tools already default there, so do not "
+    "inspect other namespaces. You have a limited number of tool rounds: be decisive, batch your "
+    "lookups, and do not re-check something you already saw.\n\n"
     "ENRICH with external services: call lookup_cve to identify the REAL CVE for the exploited vector "
     "(the exposed, unauthenticated notebook/Ray dashboard — the ShadowRay bug) and mining_impact to "
     "get the live Monero price and the $/hour of stolen GPU compute. Include the CVE id + CVSS and the "
@@ -739,10 +769,12 @@ CONSULT_PROMPT = _SCENARIO + (
 
 ADVISOR_PROMPT = _SCENARIO + (
     "You are the ADVISOR, the containment lead. Triage has classified the incident and the "
-    "Investigator has mapped the scope (both are in your context). Propose and execute the ranked "
-    "remediation now. If you need a detail the Investigator did not cover — does a pod still exist, "
-    "what is in its logs, is the miner really gone — call consult_investigator(question) to ask them "
-    "directly; their answer comes back to you before you act.\n\n"
+    "Investigator has mapped the scope (both are in your context). ACT FIRST: immediately "
+    "quarantine and then delete the unknown attacker pod(s) (owner=none) — stop the bleeding "
+    "before anything else. Only AFTER that, handle persistence and identity.\n\n"
+    "You MAY call consult_investigator(question) AT MOST ONCE, and only if you genuinely cannot "
+    "act without a detail their handoff did not cover. Do not use it to re-ask what they already "
+    "told you, and never consult twice — contain instead.\n\n"
     "AUTONOMY POLICY (the backend enforces this; respect it): you may act autonomously to delete "
     "UNKNOWN pods (no owner label), quarantine pods, and delete non-allowlisted cronjobs. Actions "
     "that touch legitimate work — revoke_service_account, cordon_node, or deleting an OWNED pod — "
@@ -817,11 +849,24 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
         {"role": "user", "content": context},
     ]
     final = ""
+    consults = 0  # the Advisor may consult the Investigator at most once (keeps it from looping)
     for _round in range(rounds):
+        # On the LAST round, withhold the tools and tell the model to wrap up. A reasoning model
+        # left with tools will keep calling them until the budget runs out and never writes a
+        # final answer — the old "reached its step limit" dead-end. Forcing a tool-free final
+        # round guarantees a real terminal state: the next stage always gets a handoff, and the
+        # Advisor always produces its containment summary.
+        last = _round == rounds - 1
+        if last:
+            messages.append({"role": "user", "content": (
+                "You are out of tool budget — do NOT call any tools. Give your final answer now: "
+                "your handoff to the next stage, or (if you are the Advisor) a one-paragraph "
+                "containment summary of what you did and what still needs a human.")})
         try:
             resp = oai.chat.completions.create(
-                model=model, messages=messages, tools=tools,
-                temperature=0.2, max_tokens=4096,  # reasoning models spend part of this on thinking
+                model=model, messages=messages,
+                tools=None if last else tools,
+                temperature=0, max_tokens=4096,  # temp 0: same incident -> same response, every run
             )
         except Exception as e:  # noqa: BLE001
             store.add_timeline(kind="system", actor="System",
@@ -841,9 +886,10 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
                 for tc in tool_calls
             ] or None,
         })
-        if msg.content and not tool_calls:
-            final = msg.content.strip()
-            store.add_timeline(kind="agent", actor=name, agent=role, text=final, severity="info")
+        if not tool_calls:  # the model is done (or was forced to wrap up) — this is its final text
+            final = (msg.content or "").strip() or _round_reasoning
+            if final:
+                store.add_timeline(kind="agent", actor=name, agent=role, text=final, severity="info")
             break
         for tc in tool_calls:
             fname = tc.function.name
@@ -856,8 +902,14 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
             # stage's mutating tools. This is the pipeline analogue of classify() — the model
             # proposes, the backend decides. Without it, `allowed` would be advisory only.
             if fname == "consult_investigator" and fname in allowed:
-                # The Advisor asks the Investigator a follow-up — a real two-way exchange.
-                result = _consult(oai, (args.get("question") or "").strip() or "What should I double-check?")
+                if consults >= 1:
+                    # One consult is the collaboration beat; more is the Advisor stalling instead
+                    # of containing. Refuse further consults and push it to act.
+                    result = ("Already consulted the Investigator once this incident. Do not consult "
+                              "again — act on what you know and contain now.")
+                else:
+                    consults += 1
+                    result = _consult(oai, (args.get("question") or "").strip() or "What should I double-check?")
             elif fname not in allowed:
                 result = f"error: tool '{fname}' is not permitted for the {role} agent"
                 store.add_timeline(
@@ -867,9 +919,6 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
             else:
                 result = _dispatch(fname, args)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result[:2000]})
-    else:
-        store.add_timeline(kind="agent", actor=name, agent=role,
-                           text=f"{name} reached its step limit.", severity="info")
     _round_reasoning = ""
     return final
 
@@ -915,17 +964,19 @@ def run_agent(trigger: str) -> None:
     # 2) Investigator — fast model, scope only.
     inv = _run_role(
         oai, role=INVESTIGATOR, model=config.NEMOTRON_FAST_MODEL, system_prompt=INVESTIGATOR_PROMPT,
-        allowed=_INVESTIGATOR_TOOLS,
+        allowed=_INVESTIGATOR_TOOLS, rounds=8,  # scope 4 assets + CVE + mining impact needs the room
         context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\nDetermine the scope, then hand off to the Advisor.",
     )
     _handoff(INVESTIGATOR, ADVISOR, inv)
 
-    # 3) Advisor — heavy model, the only stage that contains.
+    # 3) Advisor — heavy model, the only stage that contains. It sees what is already awaiting a
+    #    human so it does not re-propose a decision that is already on the operator's queue.
     _run_role(
         oai, role=ADVISOR, model=config.NEMOTRON_MODEL, system_prompt=ADVISOR_PROMPT,
         allowed=_ADVISOR_TOOLS, rounds=8,
         context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\n"
-        f"Investigator findings:\n{inv or '(none)'}\n\nPropose and execute the ranked remediation now.",
+        f"Investigator findings:\n{inv or '(none)'}\n\n{_pending_summary()}\n\n"
+        "Propose and execute the ranked remediation now.",
     )
 
 
