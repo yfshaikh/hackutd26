@@ -45,9 +45,24 @@ export const PHASES: { id: IncidentPhase; label: string }[] = [
 ];
 
 export const ROLE: Record<Role, { label: string; can: string }> = {
-  admin: { label: "Admin", can: "Everything, including adding users" },
-  responder: { label: "Responder", can: "Approve or deny actions and post messages" },
+  admin: { label: "Admin", can: "Everything, including adding users and changing roles" },
+  approver: { label: "Approver", can: "Approve or deny the agent's proposed actions" },
+  operator: { label: "Operator", can: "Post updates and edit the record and scope" },
+  responder: { label: "Responder", can: "Approve actions, post updates, and edit the record" },
   viewer: { label: "Viewer", can: "Read only" },
 };
 
-export const canAct = (r: Role | undefined) => r === "admin" || r === "responder";
+export const ROLE_ORDER: Role[] = ["admin", "approver", "operator", "responder", "viewer"];
+
+/** Who can approve/deny the agent's proposed actions. */
+export const canAct = (r: Role | undefined) => r === "admin" || r === "responder" || r === "approver";
+
+/** Who can post person-to-person chat and update the record/scope. */
+export const canChat = (r: Role | undefined) => r === "admin" || r === "responder" || r === "operator";
+export const canEditRecord = canChat;
+
+export const RISK: Record<"low" | "medium" | "high", { label: string; tone: string }> = {
+  low: { label: "Low", tone: "clean" },
+  medium: { label: "Medium", tone: "invest" },
+  high: { label: "High", tone: "exfil" },
+};

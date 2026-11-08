@@ -12,7 +12,8 @@ Base URL: `VITE_API_URL`, default `http://localhost:8000`.
   `Access-Control-Allow-Origin: <exact console origin>` (not `*`) and `Access-Control-Allow-Credentials: true`,
   and answer `OPTIONS` preflights (`Access-Control-Allow-Headers: Content-Type`).
 - Errors: any non-2xx status with JSON `{"detail": "human readable reason"}`. The console shows `detail` verbatim.
-- Roles: `admin` (everything, including users), `responder` (approve/deny, post messages), `viewer` (read only).
+- Roles: `admin` (everything, including users), `approver` (approve/deny only), `operator`
+  (chat + record/scope edits), `responder` (both, legacy), `viewer` (read only).
   The console hides controls by role, but **the backend must enforce roles itself**.
 
 ## Endpoints
@@ -24,9 +25,16 @@ Base URL: `VITE_API_URL`, default `http://localhost:8000`.
 | POST | `/auth/logout` | | 204 | signed in |
 | GET | `/snapshot` | | `Snapshot` | signed in |
 | GET | `/events` | | SSE stream of `ServerEvent` (below) | signed in |
-| POST | `/approvals/{id}/approve` | | updated `Approval` | admin, responder |
-| POST | `/approvals/{id}/deny` | | updated `Approval` | admin, responder |
-| POST | `/messages` | `{text}` | the new `TimelineEntry` (kind `human`, actor = user's name) | admin, responder |
+| POST | `/approvals/{id}/approve` | | updated `Approval` | admin, responder, approver |
+| POST | `/approvals/{id}/deny` | | updated `Approval` | admin, responder, approver |
+| POST | `/messages` | `{text}` | the new `TimelineEntry` (kind `human`, actor = user's name) | admin, responder, operator |
+| GET | `/messages` | | `TimelineEntry[]` (human chat history) | signed in |
+| GET | `/incident/record` | | `IncidentRecord \| null` | signed in |
+| PATCH | `/incident/record` | `IncidentRecordPatch` | updated `IncidentRecord` | admin, responder, operator |
+| GET | `/incident/scope` | | `Asset[]` | signed in |
+| PATCH | `/incident/scope/{assetId}` | `{status, note?}` | updated `Asset` | admin, responder, operator |
+| GET | `/roles` | | `RoleInfo[]` | signed in |
+| PATCH | `/users/{id}/role` | `{role}` | updated `User` | admin |
 | GET | `/users` | | `User[]` | admin |
 | POST | `/users` | `NewUser` (`{name, email, role}`) | created `User` | admin |
 | GET | `/attack` | | `AttackStep[]` | anyone (judges' panel, no sign-in) |
@@ -72,4 +80,12 @@ data: {"type":"timeline","entry":{...TimelineEntry}}
 - `Gpu.simulatedFault`: set only for injected hardware faults; the UI labels them "Simulated".
 - `Cluster.gpuHistory`: recent total GPU utilization samples (0–100), oldest first, for the sparkline. Send `[]` if you have none.
 - `IncidentRecord.notificationDueAt`: set when client data leaves; the record shows a countdown.
+- `IncidentRecord.notificationDeadlines` (WS-B): list of `{label, dueAt, jurisdiction?, status}`
+  breach-notification clocks. The console ticks every second; `notificationDueAt` remains the
+  legacy single-deadline fallback.
+- `IncidentRecord` full NIST fields (WS-B, all optional): `summary`, `impact`, `rootCause`,
+  `evidence[]`, `containmentMeasures[]`, `lessonsLearned`, `incidentCommander`,
+  `notifiedParties[]`, `closedAt`.
+- `Approval.rank` / `runbookRef` / `risk` / `reversible` (WS-A): optional ranked-plan fields.
+  When present the console sorts pending approvals by `rank` and shows the cited runbook step.
 - `Snapshot.record` is `null` until the first detection. `Snapshot.firm` is the customer name shown top-left.

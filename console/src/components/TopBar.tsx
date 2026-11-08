@@ -24,8 +24,12 @@ export function TopBar() {
   return (
     <header className="topbar">
       <div className="brand">
-        <strong>{snapshot?.firm ?? "Command center"}</strong>
-        <span>{snapshot ? `Cluster ${snapshot.cluster.name}` : "Incident response"}</span>
+        <strong>NMC operator console</strong>
+        <span>
+          {snapshot
+            ? `Client: ${snapshot.firm} · Cluster ${snapshot.cluster.name}`
+            : "Client incident response"}
+        </span>
       </div>
       <nav className="nav" aria-label="Main">
         <Link href="/">Command center</Link>

@@ -28,8 +28,11 @@ export function Login() {
     <div className="login">
       <form className="login-card form" onSubmit={submit}>
         <div>
-          <h1>Sign in to the command center</h1>
-          <p className="lede">Runs apart from the cluster it protects.</p>
+          <h1>Sign in to the operator console</h1>
+          <p className="lede">
+            <strong>NMC · SOC</strong> — monitoring the GPU cluster for <strong>Halloran &amp; Vance LLP</strong> (client).
+            This console runs off the attacked box, so a fully compromised cluster cannot reach it.
+          </p>
         </div>
         {status === "offline" && (
           <div className="notice t-exfil" role="alert">

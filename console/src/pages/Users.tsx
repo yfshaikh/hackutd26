@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { addUser, errorText, listUsers } from "../api";
+import { addUser, errorText, listUsers, setUserRole } from "../api";
 import { Empty } from "../components/Empty";
 import { useSession } from "../context";
 import { dateTime } from "../format";
-import { ROLE } from "../labels";
+import { ROLE, ROLE_ORDER } from "../labels";
 import type { Role, User } from "../types";
 
 export function Users() {
@@ -14,6 +14,7 @@ export function Users() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("responder");
   const [busy, setBusy] = useState(false);
+  const [changing, setChanging] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(() => {
@@ -47,15 +48,33 @@ export function Users() {
     }
   };
 
+  const changeRole = async (u: User, next: Role) => {
+    if (next === u.role) return;
+    setChanging(u.id);
+    setResult(null);
+    try {
+      const updated = await setUserRole(u.id, next);
+      setUsers((prev) => (prev ? prev.map((x) => (x.id === updated.id ? updated : x)) : prev));
+      setResult({ ok: true, text: `${updated.name} is now ${ROLE[updated.role].label.toLowerCase()}.` });
+    } catch (e) {
+      setResult({ ok: false, text: `Role not changed: ${errorText(e)}` });
+    } finally {
+      setChanging(null);
+    }
+  };
+
   return (
     <main className="page stack">
       <div>
-        <h1>Users</h1>
-        <p className="lede">Add the people who respond to incidents. Roles decide who can approve agent actions.</p>
+        <h1>Users &amp; roles</h1>
+        <p className="lede">
+          Add the people who respond to incidents. Roles decide who can approve the agent's
+          proposed actions, who can post updates, and who is read-only.
+        </p>
       </div>
 
       <div className="roles">
-        {(Object.keys(ROLE) as Role[]).map((r) => (
+        {ROLE_ORDER.map((r) => (
           <div key={r}>
             <strong>{ROLE[r].label}</strong>
             {ROLE[r].can}
@@ -78,9 +97,9 @@ export function Users() {
             <label>
               Role
               <select className="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                <option value="admin">Admin</option>
-                <option value="responder">Responder</option>
-                <option value="viewer">Viewer</option>
+                {ROLE_ORDER.map((r) => (
+                  <option key={r} value={r}>{ROLE[r].label}</option>
+                ))}
               </select>
             </label>
             <button className="btn btn-primary" disabled={busy}>{busy ? "Adding…" : "Add user"}</button>
@@ -109,14 +128,27 @@ export function Users() {
           <div style={{ overflowX: "auto" }}>
             <table className="users">
               <thead>
-                <tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th></tr>
+                <tr><th>Name</th><th>Email</th><th>Role</th><th>Change role</th><th>Added</th></tr>
               </thead>
               <tbody>
                 {users.map((u) => (
                   <tr key={u.id}>
-                    <td>{u.name}</td>
+                    <td>{u.name}{u.id === user?.id && <span className="aside"> (you)</span>}</td>
                     <td>{u.email}</td>
                     <td>{ROLE[u.role].label}</td>
+                    <td>
+                      <select
+                        className="input input-compact"
+                        value={u.role}
+                        disabled={u.id === user?.id || changing === u.id}
+                        onChange={(e) => changeRole(u, e.target.value as Role)}
+                        aria-label={`Role for ${u.name}`}
+                      >
+                        {ROLE_ORDER.map((r) => (
+                          <option key={r} value={r}>{ROLE[r].label}</option>
+                        ))}
+                      </select>
+                    </td>
                     <td>{dateTime(u.createdAt)}</td>
                   </tr>
                 ))}

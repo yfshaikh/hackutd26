@@ -528,3 +528,128 @@ table.users tr:last-child td { border-bottom: 0; }
 .tx-http .tx-text { color: var(--contained); }
 .tx-code .tx-text { color: var(--muted); }
 .tx-output .tx-text { color: var(--text); }
+
+/* =====================================================================
+   WS-B: Winstead full dashboard
+   ===================================================================== */
+
+/* ---- two-sided framing ---------------------------------------------- */
+.framing {
+  display: grid; gap: 10px; padding: 10px 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+@media (max-width: 980px) { .framing { grid-template-columns: 1fr; } }
+.frame-card {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-m);
+  background: var(--panel-2); font-size: 13px; color: var(--muted);
+}
+.frame-card strong { color: var(--text); font-size: 15px; }
+.frame-card.client { border-left: 4px solid var(--contained); }
+.frame-card.operator { border-left: 4px solid var(--agent); }
+.frame-card.resilience { border-left: 4px solid var(--clean); }
+.frame-tag {
+  align-self: flex-start; font-size: 11px; font-weight: 800; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--faint);
+}
+
+/* ---- right column: record + chat ------------------------------------ */
+.area-right {
+  grid-area: record; display: flex; flex-direction: column; gap: 12px; min-width: 0;
+}
+.panel-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* ---- ranked plan ----------------------------------------------------- */
+.approval-head { display: flex; align-items: center; gap: 8px; grid-column: 1; }
+.approval-head h3 { margin: 0; }
+.approval .rank {
+  display: grid; place-items: center; min-width: 34px; height: 34px; padding: 0 6px;
+  border-radius: 999px; background: #1b1600; color: var(--hazard);
+  font-weight: 800; font-size: 15px;
+}
+.approval .plan-tags { grid-column: 1; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 8px; border-radius: 999px; border: 1px solid #8a7a3a;
+  font-size: 12px; font-weight: 700; color: #4a3d00; background: #fff8dc;
+}
+.approval .meta, .approval .policy, .approval .why { grid-column: 1; }
+.approval .actions { grid-row: 1 / span 5; }
+
+/* ---- breach deadlines ----------------------------------------------- */
+.deadline-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+.deadline-card {
+  display: flex; flex-direction: column; gap: 2px; padding: 9px 11px;
+  border: 1px solid var(--line); border-left: 4px solid var(--tone);
+  border-radius: var(--r-s); background: var(--tone-bg);
+}
+.deadline-top { display: flex; align-items: center; gap: 6px; justify-content: space-between; flex-wrap: wrap; }
+.deadline-label { font-size: 13px; font-weight: 800; color: var(--tone); }
+.deadline-big { font-size: 19px; font-weight: 800; color: var(--tone); letter-spacing: -0.01em; }
+.deadline-when { font-size: 12px; color: var(--muted); }
+.deadline-empty { color: var(--faint); font-style: italic; font-size: 13px; }
+.field-wide { grid-template-columns: 128px 1fr; }
+.record-foot {
+  margin: 0; padding: 10px 14px; border-top: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); background: var(--panel-2);
+}
+.record-foot strong { color: var(--clean); }
+
+/* ---- record editor --------------------------------------------------- */
+.record-editor { padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+.editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.editor-grid label { display: grid; gap: 4px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.editor-grid label.wide { grid-column: 1 / -1; }
+.editor-grid .input { font-weight: 400; color: var(--text); width: 100%; }
+textarea.input { resize: vertical; min-height: 38px; }
+.editor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 760px) { .editor-grid { grid-template-columns: 1fr; } }
+
+/* ---- people chat ----------------------------------------------------- */
+.chat-panel { display: flex; flex-direction: column; min-height: 220px; }
+.chat-feed {
+  list-style: none; margin: 0; padding: 8px 14px; display: flex; flex-direction: column;
+  gap: 8px; overflow-y: auto; max-height: 260px; flex: 1;
+}
+.chat-msg { border-left: 3px solid var(--line-strong); padding-left: 8px; }
+.chat-meta { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--faint); }
+.chat-meta strong { color: var(--text); font-size: 13px; }
+.chat-msg p { margin: 1px 0 0; font-size: 14px; white-space: pre-wrap; }
+.chat-composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.chat-composer .input { flex: 1; }
+.chat-err { color: var(--exfil); font-weight: 700; }
+.hint { padding: 10px 14px; font-size: 13px; color: var(--muted); }
+.panel .hint:last-child { border-top: 1px solid var(--line); }
+
+/* ---- roles / users --------------------------------------------------- */
+.roles { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.input-compact { min-height: 30px; padding: 2px 8px; font-size: 13px; }
+
+/* ---- print / PDF export --------------------------------------------- */
+.print-only { display: none; }
+
+@media print {
+  :root, :root[data-theme="dark"] { color-scheme: light; }
+  html, body, #root { height: auto !important; background: #fff !important; color: #000 !important; }
+  body { font-size: 10.5pt; }
+  .topbar, .band, .framing, .area-scope, .area-cluster, .area-timeline,
+  .chat-panel, .no-print, .panel-head .aside, .record-foot, .empty { display: none !important; }
+  .shell, .board, .area-right { display: block !important; height: auto !important; padding: 0 !important; margin: 0 !important; }
+  .area-record { border: 0 !important; box-shadow: none !important; }
+  .panel-head { border-bottom: 2px solid #000; padding: 0 0 6px; }
+  .panel-head h2 { font-size: 16pt; }
+  .print-only { display: block !important; }
+  .print-head { display: flex !important; flex-direction: column; gap: 2px; border-bottom: 1px solid #000; padding-bottom: 6px; margin-bottom: 8px; }
+  .print-head strong { font-size: 15pt; }
+  .record-title { padding: 6px 0; }
+  .field { grid-template-columns: 120px 1fr; padding: 4px 0; border-bottom: 1px solid #bbb; break-inside: avoid; }
+  .field dt { color: #333; }
+  .field ul, .field ol { padding-left: 16px; }
+  .deadline-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .deadline-card { border: 1px solid #999; background: #fff !important; padding: 4px 6px; }
+  .deadline-big, .deadline-label { color: #000 !important; }
+  .chip, .tag { border: 1px solid #666 !important; background: #fff !important; color: #000 !important; }
+  a { text-decoration: none; color: #000; }
+  @page { margin: 14mm; }
+}

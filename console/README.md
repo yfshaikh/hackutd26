@@ -1,8 +1,9 @@
 # Command center console
 
-The dashboard for the HackUTD 2026 attacker-vs-defender project: live timeline, approvals,
-scope board, NIST-style incident record, cluster view (2D list and 3D floor), user admin, and
-the judges' attack panel. Vite + React + TypeScript; the only runtime dependencies are React,
+The dashboard for the HackUTD 2026 attacker-vs-defender project: live timeline, ranked
+approvals, scope board, full NIST SP 800-61 incident record with PDF export, breach-deadline
+countdowns, people chat, roles, cluster view (2D list and 3D floor), user admin, and the
+attacker workstation. Vite + React + TypeScript; the only runtime dependencies are React,
 three.js (lazy-loaded for the 3D floor) and self-hosted fonts, so the console makes no
 third-party network requests.
 
@@ -31,10 +32,10 @@ or copy `.env.example` to `.env.local` and set `VITE_API_URL` there.
 
 | Route | Who | What |
 |---|---|---|
-| `/` | signed in | Command center: decision band, scope, cluster, timeline + chat, incident record |
+| `/` | signed in | Operator console: decision band, client/operator framing, scope, cluster, timeline, incident record + people chat |
 | `/floor` | signed in | Full-screen 3D data-center floor |
-| `/users` | admin | Add users with a role; list who has access |
-| `/attack` | anyone | Judges' attack panel: 4 steps and Reset (no sign-in by design) |
+| `/users` | admin | Add users with a role, change existing roles, list who has access |
+| `/attack` | anyone | Redirects to the attacker workstation (5 steps and Reset, no sign-in by design) |
 
 Anything else redirects to `/`. Not signed in shows the sign-in screen.
 
@@ -71,10 +72,14 @@ REST (approve, deny, messages, users, attack, reset) ◄── api.ts ◄── 
 | `src/main.tsx` | Entry: fonts, theme, mount |
 | `src/App.tsx` | Routes and sign-in gate; lazy-loads the floor page |
 | `src/components/TopBar.tsx` | Firm, nav, NIST phase track, incident status, connection, theme, user |
-| `src/components/DecisionBand.tsx` | "What do I do now": yellow Approve / Deny band when decisions wait, otherwise status and next step |
+| `src/components/DecisionBand.tsx` | "What do I do now": yellow ranked-plan band when decisions wait, otherwise status and next step |
 | `src/components/Timeline.tsx` | Unified feed (attacks, agents, people), autonomy reason chips, filters, message box |
 | `src/components/ScopeBoard.tsx` | Per-asset status, worst first, with tally |
-| `src/components/IncidentRecord.tsx` | NIST SP 800-61 fields, notification countdown |
+| `src/components/IncidentRecord.tsx` | Full NIST SP 800-61 record, live breach clocks, PDF export, edit toggle |
+| `src/components/RecordEditor.tsx` | Human editor for the NIST fields and breach deadlines |
+| `src/components/BreachCountdown.tsx` | Live second-by-second notification countdowns |
+| `src/components/Chat.tsx` | Person-to-person incident chat (GET/POST `/messages` + live SSE) |
+| `src/components/Framing.tsx` | Client (law firm) vs operator (NMC) framing + compromise-resilience |
 | `src/components/ClusterView.tsx` | 2D nodes / GPUs / pods with sparkline; toggle to 3D |
 | `src/components/NodeDetail.tsx` | Detail drawer for a node or GPU, shared by 2D and 3D |
 | `src/components/Empty.tsx` | Empty, connecting and disconnected states |

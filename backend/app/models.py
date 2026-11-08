@@ -21,8 +21,8 @@ IncidentPhase = Literal[
     "preparation", "detection", "containment", "eradication", "recovery", "post-incident"
 ]
 IncidentStatus = Literal["monitoring", "open", "contained", "resolved"]
-Role = Literal["admin", "responder", "viewer"]
-AttackStepId = Literal["gain-access", "start-miner", "steal-weights", "persistence"]
+Role = Literal["admin", "approver", "operator", "responder", "viewer"]
+AttackStepId = Literal["gain-access", "start-miner", "steal-weights", "persistence", "ddos"]
 AttackStepStatus = Literal["locked", "ready", "running", "done"]
 
 
@@ -140,6 +140,15 @@ class RecordAction(BaseModel):
     text: str
 
 
+class NotificationDeadline(BaseModel):
+    """A breach-notification clock (e.g. GDPR 72h, client contract, state law)."""
+
+    label: str
+    dueAt: str
+    jurisdiction: Optional[str] = None
+    status: Literal["upcoming", "due", "met", "overdue"] = "upcoming"
+
+
 class IncidentRecord(BaseModel):
     id: str
     title: str
@@ -154,7 +163,60 @@ class IncidentRecord(BaseModel):
     actionsTaken: list[RecordAction] = []
     nextSteps: list[str] = []
     notificationDueAt: Optional[str] = None
+    # --- WS-B: full NIST SP 800-61 record (all additive/optional) -----------
+    summary: Optional[str] = None
+    impact: Optional[str] = None
+    rootCause: Optional[str] = None
+    evidence: list[str] = []
+    containmentMeasures: list[str] = []
+    lessonsLearned: Optional[str] = None
+    incidentCommander: Optional[str] = None
+    notifiedParties: list[str] = []
+    notificationDeadlines: list[NotificationDeadline] = []
+    closedAt: Optional[str] = None
     updatedAt: str
+
+
+class IncidentRecordPatch(BaseModel):
+    """PATCH body for the record editor. Only fields present in the request change."""
+
+    title: Optional[str] = None
+    status: Optional[IncidentStatus] = None
+    phase: Optional[IncidentPhase] = None
+    severity: Optional[Severity] = None
+    detectedAt: Optional[str] = None
+    summary: Optional[str] = None
+    impact: Optional[str] = None
+    rootCause: Optional[str] = None
+    vector: Optional[str] = None
+    incidentCommander: Optional[str] = None
+    lessonsLearned: Optional[str] = None
+    notificationDueAt: Optional[str] = None
+    closedAt: Optional[str] = None
+    categories: Optional[list[str]] = None
+    affectedSystems: Optional[list[str]] = None
+    nextSteps: Optional[list[str]] = None
+    evidence: Optional[list[str]] = None
+    containmentMeasures: Optional[list[str]] = None
+    notifiedParties: Optional[list[str]] = None
+    notificationDeadlines: Optional[list[NotificationDeadline]] = None
+
+
+class RoleInfo(BaseModel):
+    id: Role
+    label: str
+    canApprove: bool
+    canChat: bool
+    canManageUsers: bool
+
+
+class SetRoleBody(BaseModel):
+    role: Role
+
+
+class ScopePatch(BaseModel):
+    status: AssetStatus
+    note: Optional[str] = None
 
 
 class User(BaseModel):

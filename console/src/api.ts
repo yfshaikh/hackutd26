@@ -7,11 +7,17 @@
 
 import type {
   Approval,
+  Asset,
+  AssetStatus,
   AttackResult,
   AttackStep,
   AttackStepId,
   ConnectionState,
+  IncidentRecord,
+  IncidentRecordPatch,
   NewUser,
+  Role,
+  RoleInfo,
   ServerEvent,
   Session,
   Snapshot,
@@ -67,6 +73,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
+const patch = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+
 // ---- Session -------------------------------------------------------------
 
 export const getSession = () => request<Session>("/auth/me");
@@ -84,6 +93,20 @@ export const deny = (id: string) =>
   post<Approval>(`/approvals/${encodeURIComponent(id)}/deny`);
 
 export const sendMessage = (text: string) => post<TimelineEntry>("/messages", { text });
+
+// ---- WS-B: incident record / scope / roles / chat -------------------------
+
+export const getRecord = () => request<IncidentRecord | null>("/incident/record");
+export const patchRecord = (body: IncidentRecordPatch) => patch<IncidentRecord>("/incident/record", body);
+
+export const getScope = () => request<Asset[]>("/incident/scope");
+export const patchScope = (assetId: string, status: AssetStatus, note?: string) =>
+  patch<Asset>(`/incident/scope/${encodeURIComponent(assetId)}`, { status, note });
+
+export const getMessages = () => request<TimelineEntry[]>("/messages");
+export const listRoles = () => request<RoleInfo[]>("/roles");
+export const setUserRole = (userId: string, role: Role) =>
+  patch<User>(`/users/${encodeURIComponent(userId)}/role`, { role });
 
 // ---- Attack panel (judges) ----------------------------------------------
 

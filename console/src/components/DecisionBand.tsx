@@ -6,7 +6,7 @@ import { API_URL, approve, deny, errorText } from "../api";
 import { useLive, useSession } from "../context";
 import { ago, clock } from "../format";
 import { useNow } from "../hooks";
-import { canAct } from "../labels";
+import { canAct, RISK } from "../labels";
 import { Link } from "../router";
 import type { Approval } from "../types";
 
@@ -17,6 +17,7 @@ function ApprovalCard({ a }: { a: Approval }) {
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const allowed = canAct(user?.role);
+  const risk = a.risk ? RISK[a.risk] : null;
 
   const decide = async (kind: "approve" | "deny") => {
     setBusy(kind);
@@ -33,12 +34,25 @@ function ApprovalCard({ a }: { a: Approval }) {
 
   return (
     <article className="approval" aria-label={`Approval needed: ${a.action}`}>
-      <h3>{a.action}</h3>
+      <div className="approval-head">
+        {typeof a.rank === "number" && <span className="rank" title="Ranked remediation step">#{a.rank}</span>}
+        <h3>{a.action}</h3>
+      </div>
       <p className="why">{a.rationale}</p>
       <p className="policy">Needs a human: {a.policyReason}</p>
       <p className="meta">
         If approved: {a.impact} Asked by {a.requestedBy}, {ago(a.requestedAt, now)}.
       </p>
+      {(a.runbookRef || risk || a.reversible !== undefined) && (
+        <p className="plan-tags">
+          {a.runbookRef && <span className="tag mono" title="Runbook step">{a.runbookRef}</span>}
+          {risk && <span className={`chip t-${risk.tone}`}>Risk: {risk.label}</span>}
+          {a.reversible !== undefined && (
+            <span className="tag">{a.reversible ? "Reversible" : "Not reversible"}</span>
+          )}
+          {a.target && <span className="tag mono">{a.target}</span>}
+        </p>
+      )}
       <div className="actions">
         {allowed ? (
           <>
@@ -50,7 +64,11 @@ function ApprovalCard({ a }: { a: Approval }) {
             </button>
           </>
         ) : (
-          <span className="readonly">Viewers can't decide. Ask a responder.</span>
+          <span className="readonly">
+            {user?.role === "operator"
+              ? "Operators can post updates but not approve. Ask an approver."
+              : "Viewers can't decide. Ask an approver."}
+          </span>
         )}
       </div>
       {err && <p className="err" role="alert">{err}</p>}
@@ -75,6 +93,13 @@ export function DecisionBand() {
   }
 
   const pending = snapshot.approvals.filter((a) => a.status === "pending");
+  const ranked = pending.some((a) => typeof a.rank === "number");
+  const ordered = ranked
+    ? pending
+        .slice()
+        .sort((a, b) => (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER)
+          || a.requestedAt.localeCompare(b.requestedAt))
+    : pending;
   const stale = connection !== "live";
 
   if (pending.length > 0) {
@@ -82,12 +107,16 @@ export function DecisionBand() {
       <section className="band band-hazard" aria-live="assertive">
         <div className="band-head">
           <span className="band-title">
-            {pending.length === 1 ? "1 action is waiting for your decision" : `${pending.length} actions are waiting for your decision`}
+            {ranked ? "Ranked remediation plan" : pending.length === 1 ? "1 action is waiting for your decision" : `${pending.length} actions are waiting for your decision`}
           </span>
-          <span className="band-sub">Agents have already done what they could on their own.</span>
+          <span className="band-sub">
+            {ranked
+              ? "Ordered by the agent's runbook: lower rank first. Approve, deny, or adjust the plan."
+              : "Agents have already done what they could on their own."}
+          </span>
         </div>
         <div className="approvals">
-          {pending.map((a) => (
+          {ordered.map((a) => (
             <ApprovalCard key={a.id} a={a} />
           ))}
         </div>

@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
-import { useLive } from "../context";
-import { countdown, dateTime, clock } from "../format";
-import { useNow } from "../hooks";
-import { incidentStatus, PHASES } from "../labels";
+import { useState, type ReactNode } from "react";
+import { useLive, useSession } from "../context";
+import { dateTime, clock } from "../format";
+import { canEditRecord, incidentStatus, PHASES } from "../labels";
 import { Empty, NoData, NoIncident } from "./Empty";
+import { BreachCountdown } from "./BreachCountdown";
+import { RecordEditor } from "./RecordEditor";
 import { SeverityChip } from "./Status";
 
 function Field({ label, children, empty }: { label: string; children?: ReactNode; empty?: boolean }) {
@@ -15,23 +16,58 @@ function Field({ label, children, empty }: { label: string; children?: ReactNode
   );
 }
 
+function List({ items }: { items: string[] }) {
+  return (
+    <ul>
+      {items.map((s, i) => (
+        <li key={`${s}-${i}`} className={s.includes("/") || s.includes(":") ? "mono" : undefined}>{s}</li>
+      ))}
+    </ul>
+  );
+}
+
 export function IncidentRecord() {
-  const { snapshot, connection } = useLive();
-  const now = useNow();
+  const { snapshot, connection, apply } = useLive();
+  const { user } = useSession();
+  const [editing, setEditing] = useState(false);
   const r = snapshot?.record ?? null;
+  const canEdit = canEditRecord(user?.role);
 
   return (
     <section className="panel area-record" aria-labelledby="rec-h">
       <div className="panel-head">
         <h2 id="rec-h">Incident record</h2>
-        <span className="aside">NIST SP 800-61 fields{r ? `, updated ${clock(r.updatedAt)}` : ""}</span>
+        <div className="panel-tools">
+          <span className="aside">NIST SP 800-61{r ? `, updated ${clock(r.updatedAt)}` : ""}</span>
+          {r && canEdit && (
+            <button className="btn btn-ghost no-print" onClick={() => setEditing((v) => !v)}>
+              {editing ? "Close editor" : "Edit record"}
+            </button>
+          )}
+          {r && !editing && (
+            <button className="btn no-print" onClick={() => window.print()} title="Print or save as PDF">
+              Export PDF
+            </button>
+          )}
+        </div>
       </div>
+
       {!snapshot ? (
         <NoData connection={connection} what="The incident record" />
       ) : !r ? (
         <NoIncident />
+      ) : editing ? (
+        <RecordEditor
+          record={r}
+          onSaved={(updated) => apply({ type: "record", record: updated })}
+          onCancel={() => setEditing(false)}
+        />
       ) : (
         <>
+          <div className="print-only print-head">
+            <strong>NMC operator console · Client: {snapshot.firm}</strong>
+            <span>NIST SP 800-61 incident record · exported {dateTime(new Date().toISOString())}</span>
+          </div>
           <div className="record-title">
             <h3>{r.title}</h3>
             <span className="id mono">{r.id}</span>
@@ -44,9 +80,15 @@ export function IncidentRecord() {
             <Field label="Severity">
               <SeverityChip severity={r.severity} />
             </Field>
+            <Field label="Commander" empty={!r.incidentCommander}>
+              {r.incidentCommander}
+            </Field>
             <Field label="Detected" empty={!r.detectedAt}>
               {dateTime(r.detectedAt)}
               {r.reportedBy && <> by {r.reportedBy}</>}
+            </Field>
+            <Field label="Summary" empty={!r.summary}>
+              {r.summary}
             </Field>
             <Field label="Category" empty={r.categories.length === 0}>
               {r.categories.join(", ")}
@@ -55,17 +97,29 @@ export function IncidentRecord() {
               {r.vector}
             </Field>
             <Field label="Affected systems" empty={r.affectedSystems.length === 0}>
-              <ul>
-                {r.affectedSystems.map((s) => (
-                  <li key={s} className="mono">{s}</li>
-                ))}
-              </ul>
+              <List items={r.affectedSystems} />
             </Field>
-            {r.notificationDueAt && (
-              <Field label="Client notice due">
-                <span className="deadline">{countdown(r.notificationDueAt, now)}</span> ({dateTime(r.notificationDueAt)})
-              </Field>
-            )}
+            <Field label="Business impact" empty={!r.impact}>
+              {r.impact}
+            </Field>
+            <Field label="Root cause" empty={!r.rootCause}>
+              {r.rootCause}
+            </Field>
+            <Field label="Evidence" empty={(r.evidence ?? []).length === 0}>
+              <List items={r.evidence ?? []} />
+            </Field>
+            <Field label="Containment" empty={(r.containmentMeasures ?? []).length === 0}>
+              <List items={r.containmentMeasures ?? []} />
+            </Field>
+            <div className="field field-wide">
+              <dt>Breach deadlines</dt>
+              <dd>
+                <BreachCountdown
+                  deadlines={r.notificationDeadlines ?? []}
+                  fallbackDueAt={r.notificationDueAt}
+                />
+              </dd>
+            </div>
             <Field label="Actions taken" empty={r.actionsTaken.length === 0}>
               <ol>
                 {r.actionsTaken.map((a, i) => (
@@ -85,10 +139,23 @@ export function IncidentRecord() {
                 ))}
               </ol>
             </Field>
+            <Field label="Notified" empty={(r.notifiedParties ?? []).length === 0}>
+              {(r.notifiedParties ?? []).join(", ")}
+            </Field>
+            <Field label="Lessons learned" empty={!r.lessonsLearned}>
+              {r.lessonsLearned}
+            </Field>
+            <Field label="Closed" empty={!r.closedAt}>
+              {dateTime(r.closedAt)}
+            </Field>
           </dl>
+          <p className="record-foot no-print">
+            <strong>Survives a compromised cluster.</strong> This record and the approval path run
+            in the operator console off the attacked box; wiping the cluster cannot erase them.
+          </p>
         </>
       )}
-      {snapshot && r && r.actionsTaken.length === 0 && r.affectedSystems.length === 0 && (
+      {snapshot && r && !editing && r.actionsTaken.length === 0 && r.affectedSystems.length === 0 && (
         <Empty title="Record opened">Fields fill in as agents and responders act.</Empty>
       )}
     </section>

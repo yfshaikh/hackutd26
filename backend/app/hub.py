@@ -52,6 +52,12 @@ def _default_attack_steps() -> list[AttackStep]:
             description="Install a CronJob that respawns the miner.",
             status="locked",
         ),
+        AttackStep(
+            id="ddos",
+            label="DDoS flood",
+            description="Turn the compromised pod into a bounded connection flood against an in-cluster sink.",
+            status="locked",
+        ),
     ]
 
 
@@ -101,7 +107,7 @@ class Store:
 
     # ---- snapshot --------------------------------------------------------
     def attack_list(self) -> list[AttackStep]:
-        order = ["gain-access", "start-miner", "steal-weights", "persistence"]
+        order = ["gain-access", "start-miner", "steal-weights", "persistence", "ddos"]
         return [self.attack[i] for i in order]
 
     def snapshot(self) -> Snapshot:

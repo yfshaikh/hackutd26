@@ -101,6 +101,13 @@ class AuthStore:
     def list_users(self) -> list[User]:
         return [r.user for r in self.users.values()]
 
+    def set_role(self, user_id: str, role: Role) -> User:
+        rec = self.users.get(user_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail="No such user")
+        rec.user.role = role
+        return rec.user
+
 
 auth = AuthStore()
 

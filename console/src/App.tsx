@@ -13,9 +13,9 @@ const FloorPage = lazy(() => import("./pages/FloorPage").then((m) => ({ default:
 const ATTACKER_APP_URL = (import.meta.env.VITE_ATTACKER_URL as string | undefined) || "http://localhost:5180";
 
 const TITLES: Record<string, string> = {
-  "/": "Command center",
+  "/": "Operator console",
   "/floor": "Floor",
-  "/users": "Users",
+  "/users": "Users & roles",
   "/attack": "Attacker workstation",
 };
 

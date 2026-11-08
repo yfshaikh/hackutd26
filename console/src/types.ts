@@ -124,6 +124,12 @@ export interface Approval {
   policyReason: string;
   /** What happens if approved, in one line. */
   impact: string;
+  /** WS-A ranked-plan fields. Lower rank = do first. */
+  rank?: number;
+  /** Runbook step cited, e.g. "RB-01#contain". */
+  runbookRef?: string;
+  risk?: "low" | "medium" | "high";
+  reversible?: boolean;
   status: ApprovalStatus;
   decidedBy?: string;
   decidedAt?: ISODate;
@@ -146,6 +152,14 @@ export interface RecordAction {
   text: string;
 }
 
+/** A breach-notification clock (e.g. GDPR 72h, client contract, state law). */
+export interface NotificationDeadline {
+  label: string;
+  dueAt: ISODate;
+  jurisdiction?: string;
+  status: "upcoming" | "due" | "met" | "overdue";
+}
+
 /** Incident record, NIST SP 800-61-style fields. */
 export interface IncidentRecord {
   id: string;
@@ -163,10 +177,56 @@ export interface IncidentRecord {
   nextSteps: string[];
   /** Set when client data leaves: when notification is due. */
   notificationDueAt?: ISODate;
+  // --- WS-B: full NIST SP 800-61 record ---------------------------------
+  summary?: string;
+  impact?: string;
+  rootCause?: string;
+  evidence: string[];
+  containmentMeasures: string[];
+  lessonsLearned?: string;
+  incidentCommander?: string;
+  notifiedParties: string[];
+  notificationDeadlines: NotificationDeadline[];
+  closedAt?: ISODate;
   updatedAt: ISODate;
 }
 
-export type Role = "admin" | "responder" | "viewer";
+/** PATCH body for the record editor. Only present fields change. */
+export type IncidentRecordPatch = Partial<
+  Pick<
+    IncidentRecord,
+    | "title"
+    | "status"
+    | "phase"
+    | "severity"
+    | "detectedAt"
+    | "summary"
+    | "impact"
+    | "rootCause"
+    | "vector"
+    | "incidentCommander"
+    | "lessonsLearned"
+    | "notificationDueAt"
+    | "closedAt"
+    | "categories"
+    | "affectedSystems"
+    | "nextSteps"
+    | "evidence"
+    | "containmentMeasures"
+    | "notifiedParties"
+    | "notificationDeadlines"
+  >
+>;
+
+export type Role = "admin" | "approver" | "operator" | "responder" | "viewer";
+
+export interface RoleInfo {
+  id: Role;
+  label: string;
+  canApprove: boolean;
+  canChat: boolean;
+  canManageUsers: boolean;
+}
 
 export interface User {
   id: string;
@@ -176,7 +236,7 @@ export interface User {
   createdAt: ISODate;
 }
 
-export type AttackStepId = "gain-access" | "start-miner" | "steal-weights" | "persistence";
+export type AttackStepId = "gain-access" | "start-miner" | "steal-weights" | "persistence" | "ddos";
 
 export interface AttackStep {
   id: AttackStepId;

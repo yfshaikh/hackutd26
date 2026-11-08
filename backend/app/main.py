@@ -17,6 +17,8 @@ from . import attacks, config, defender
 from .auth import COOKIE_NAME, auth, current_user, require_roles
 from .cluster import build_cluster, read_gpus, seed_assets
 from .hub import store
+from .routes_defender import router as defender_router
+from .routes_incident import router as incident_router
 from .transcript import transcript
 from .models import (
     AttackResult,
@@ -38,6 +40,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# WS-B: additive incident-dashboard routes (record / scope / roles / chat).
+app.include_router(incident_router)
+# WS-A: additive defender metrics route (GET /defender/metrics).
+app.include_router(defender_router)
 
 _bg_tasks: list[asyncio.Task] = []
 
@@ -154,12 +161,12 @@ async def events(request: Request, user: User = Depends(current_user)) -> Stream
 
 # ---- Approvals ------------------------------------------------------------
 @app.post("/approvals/{approval_id}/approve")
-async def approve(approval_id: str, user: User = Depends(require_roles("admin", "responder"))):
+async def approve(approval_id: str, user: User = Depends(require_roles("admin", "responder", "approver"))):
     return await _decide(approval_id, approved=True, user=user)
 
 
 @app.post("/approvals/{approval_id}/deny")
-async def deny(approval_id: str, user: User = Depends(require_roles("admin", "responder"))):
+async def deny(approval_id: str, user: User = Depends(require_roles("admin", "responder", "approver"))):
     return await _decide(approval_id, approved=False, user=user)
 
 
@@ -197,7 +204,7 @@ async def _decide(approval_id: str, *, approved: bool, user: User):
 
 # ---- Messages -------------------------------------------------------------
 @app.post("/messages")
-def post_message(body: MessageBody, user: User = Depends(require_roles("admin", "responder"))):
+def post_message(body: MessageBody, user: User = Depends(require_roles("admin", "responder", "operator"))):
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -223,7 +230,7 @@ def attack_steps():
 
 @app.post("/attack/{step}", response_model=AttackResult)
 async def run_attack(step: str) -> AttackResult:
-    if step not in ("gain-access", "start-miner", "steal-weights", "persistence"):
+    if step not in ("gain-access", "start-miner", "steal-weights", "persistence", "ddos"):
         raise HTTPException(status_code=404, detail=f"Unknown attack step '{step}'")
     current = store.attack[step].status
     if current == "locked":

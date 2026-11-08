@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { errorText, sendMessage } from "../api";
 import { useLive, useSession } from "../context";
 import { clock } from "../format";
-import { canAct } from "../labels";
+import { canChat } from "../labels";
 import type { TimelineEntry, TimelineKind } from "../types";
 import { NoData } from "./Empty";
 import { SeverityChip } from "./Status";
@@ -120,7 +120,7 @@ function Composer() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  if (!canAct(user?.role)) return <p className="hint">Viewers can read the timeline but can't post.</p>;
+  if (!canChat(user?.role)) return <p className="hint">Viewers and approvers can read the timeline but can't post.</p>;
   if (connection !== "live") return <p className="hint">Messages can be sent once the command center is back.</p>;
 
   const submit = async (ev: FormEvent) => {

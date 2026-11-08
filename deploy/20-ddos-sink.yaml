@@ -1,0 +1,64 @@
+# WS-D: the in-cluster sink for the simulated DDoS step.
+#
+# ShadowRay 2.0 turns a compromised GPU box into a DDoS bot aimed at an external
+# site. For this exercise the "victim site" is a throwaway pod on the SAME box:
+# the attack pod (created by attacks.ddos()) opens a bounded TCP connection
+# flood to sink.drop-site.svc, and this Service accepts and immediately closes
+# each connection. Nothing ever leaves the machine.
+#
+# Safety properties (must stay true):
+#   * Service is ClusterIP only — no NodePort, no LoadBalancer, no external IP.
+#   * The attack target is hard-coded in backend/app/attacks.py (DDOS_TARGET_HOST).
+#   * The sink only accepts and closes; it never forwards traffic anywhere.
+#
+# Apply: kubectl apply -f deploy/20-ddos-sink.yaml
+apiVersion: v1
+kind: Namespace
+metadata: {name: drop-site, labels: {owner: attacker}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: sink, namespace: drop-site}
+data:
+  sink.py: |
+    # A tiny accept-and-close TCP sink. It exists only so the simulated flood has
+    # a local destination and leaves a countable log line for the defender.
+    import socket
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("", 8080))
+    srv.listen(128)
+    n = 0
+    while True:
+        conn, _ = srv.accept()
+        conn.close()
+        n += 1
+        if n % 25 == 0:
+            print("sink accepted", n, "connections", flush=True)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sink, namespace: drop-site, labels: {app: sink}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: sink}}
+  template:
+    metadata: {labels: {app: sink}}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: sink
+          image: python:3.12-slim
+          command: ["python", "/app/sink.py"]
+          resources: {limits: {cpu: "100m", memory: "64Mi"}}
+          volumeMounts: [{name: app, mountPath: /app}]
+      volumes: [{name: app, configMap: {name: sink}}]
+---
+# ClusterIP only: reachable from inside the cluster, never from off-box.
+apiVersion: v1
+kind: Service
+metadata: {name: sink, namespace: drop-site, labels: {app: sink}}
+spec:
+  type: ClusterIP
+  selector: {app: sink}
+  ports: [{name: tcp, port: 80, targetPort: 8080}]

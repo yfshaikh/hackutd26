@@ -16,7 +16,7 @@ your Mac                         Brev box (AWS g4dn.xlarge, Tesla T4)        NVI
 
 | Folder | What it holds |
 |---|---|
-| `deploy/` | Kubernetes manifests: the GPU device plugin with time-slicing, and the law-firm workloads plus the drop site |
+| `deploy/` | Kubernetes manifests: the GPU device plugin with time-slicing, the law-firm workloads plus the drop site, the tailnet notebook edge, and the in-cluster DDoS sink |
 | `backend/` | FastAPI command center: API, real attack chain, detection, Nemotron defender, autonomy policy ([backend/README.md](backend/README.md)) |
 | `console/` | React defender dashboard + 3D floor view ([console/README.md](console/README.md), API contract in [console/API.md](console/API.md)) |
 | `attacker/` | The judges' attacker workstation: a 3D laptop that opens into a live attacker terminal (port 5180) |
@@ -143,6 +143,16 @@ KUBECONFIG=~/.kube/hackutd.yaml kubectl apply -f deploy/00-gpu-plugin.yaml
 
 ```bash
 KUBECONFIG=~/.kube/hackutd.yaml kubectl apply -f deploy/10-lawfirm.yaml
+```
+
+```bash
+KUBECONFIG=~/.kube/hackutd.yaml kubectl apply -f deploy/15-notebook-edge.yaml
+```
+
+```bash
+# The in-cluster sink for the simulated DDoS step (WS-D). ClusterIP only; nothing
+# ever leaves the box.
+KUBECONFIG=~/.kube/hackutd.yaml kubectl apply -f deploy/20-ddos-sink.yaml
 ```
 
 The first start pulls the 2.9 GB PyTorch image and takes a few minutes. Check that the GPU is advertised as 8:
