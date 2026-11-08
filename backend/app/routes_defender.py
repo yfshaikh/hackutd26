@@ -17,7 +17,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 
 from . import defender, evals_run
-from .auth import current_user
+from .auth import current_user, require_roles
+from .hub import store
 from .models import User
 
 router = APIRouter(prefix="/defender", tags=["defender"])
@@ -47,9 +48,17 @@ def defender_evals(user: User = Depends(current_user)) -> dict:
 
 
 @router.post("/evals/run")
-def run_evals(user: User = Depends(current_user)) -> dict:
+def run_evals(user: User = Depends(require_roles("admin"))) -> dict:
     """Start the eval suite in the background (configured model, one run per scenario). Returns
-    whether it started (False if one is already in flight) plus the live status to poll."""
+    whether it started (False if one is already in flight) plus the live status to poll.
+
+    DESTRUCTIVE: each scenario resets cluster + incident state, so we refuse while an incident is
+    open (it would wipe the responders' live incident) and gate the whole thing to admins."""
+    if store.record is not None:
+        blank = evals_run.status()
+        blank["error"] = ("An incident is open. Running evals resets cluster and incident state, "
+                          "so resolve or reset the current incident before running the suite.")
+        return {"started": False, **blank}
     started = evals_run.start()
     return {"started": started, **evals_run.status()}
 
