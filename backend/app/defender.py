@@ -165,6 +165,11 @@ def _record_merge(fields: dict) -> None:
 # Neither changes the cluster, so both always run autonomously (no approval).
 READ_TOOLS = {"list_pods", "describe_pod", "get_pod_logs", "gpu_status"}
 RECORD_TOOLS = {"update_scope", "update_incident_record"}
+# External-service lookups the agents make to enrich the incident with real-world data — a live
+# CVE/NVD lookup for the exploited vector and a crypto-price lookup to size the stolen GPU compute
+# (see enrich.py). Read-only and off-cluster, so they always run autonomously; shown in the main
+# timeline (not trace-only), because citing a real CVE/impact is part of the story.
+ENRICH_TOOLS = {"lookup_cve", "mining_impact"}
 
 
 def _pod_owner_label(name: str, namespace: str) -> str | None:
@@ -184,7 +189,7 @@ def classify(tool: str, args: dict) -> tuple[str, str, str]:
     deleting a legitimate pod, revoking the identity real users need, cordoning a node —
     is held for a human, because a mistake there is the kind that pages you at 3am.
     """
-    if tool in READ_TOOLS or tool in RECORD_TOOLS:
+    if tool in READ_TOOLS or tool in RECORD_TOOLS or tool in ENRICH_TOOLS:
         return "autonomous", "read-only or record update", ""
     if tool == "quarantine_pod":
         return "autonomous", "reversible, affects attacker only", ""
@@ -425,11 +430,30 @@ def _do_update_incident_record(fields: dict) -> str:
     return "incident record updated"
 
 
+def _do_lookup_cve(keyword: str = "unauthenticated Jupyter Ray notebook remote code execution") -> str:
+    """Call NVD (enrich.lookup_cve) and format the real CVE + CVSS for the exploited vector."""
+    from . import enrich
+    c = enrich.lookup_cve(keyword)
+    score = f"CVSS {c['cvss']} {c.get('severity') or ''}".strip() if c.get("cvss") else "severity n/a"
+    return f"{c['id']} ({score}) [{c['source']}] — {c.get('summary', '')} {c.get('url', '')}".strip()
+
+
+def _do_mining_impact(hours: float = 1.0) -> str:
+    """Call CoinGecko (enrich.mining_impact) and format the live $ cost of the stolen GPU compute."""
+    from . import enrich
+    m = enrich.mining_impact(hours)
+    return (f"Monero ${m['xmr_usd_now']} now [{m['source']}]; a Tesla T4 rents at "
+            f"${m['t4_usd_per_hour']}/hr, so {m['hours']}h of cryptojacking is ~${m['stolen_compute_usd']} "
+            f"of stolen compute — plus the firm's paid GPU jobs slowed while it ran.")
+
+
 _RAW = {
     "list_pods": _do_list_pods,
     "describe_pod": _do_describe_pod,
     "get_pod_logs": _do_get_pod_logs,
     "gpu_status": _do_gpu_status,
+    "lookup_cve": _do_lookup_cve,
+    "mining_impact": _do_mining_impact,
     "delete_pod": _do_delete_pod,
     "quarantine_pod": _do_quarantine_pod,
     "delete_cronjob": _do_delete_cronjob,
@@ -553,6 +577,20 @@ def _dispatch(tool: str, args: dict) -> str:
             agent=_current_agent,
             trace_only=True,
         )
+    elif tool in ENRICH_TOOLS:
+        # An external-service lookup (NVD / CoinGecko): shown in the main timeline, because
+        # pulling in a real CVE or dollar impact is a headline part of the investigation.
+        store.add_timeline(
+            kind="agent",
+            actor=_AGENT_NAME.get(_current_agent, AGENT),
+            text=f"External lookup ({tool}) — {result}",
+            severity="info",
+            tool=_summarize_call(tool, args),
+            tool_args=args,
+            tool_result=result,
+            reasoning=_round_reasoning or None,
+            agent=_current_agent,
+        )
     else:
         # A mutating tool that ran without approval: the Executor identity did the write.
         is_write = tool not in RECORD_TOOLS
@@ -606,6 +644,17 @@ def _tool_schemas() -> list[dict]:
         fn("describe_pod", "Show a pod's labels, images, commands and mounted PVCs.", {**nm, **ns}, ["name"]),
         fn("get_pod_logs", "Tail a pod's logs.", {**nm, **ns}, ["name"]),
         fn("gpu_status", "Current GPU utilization and memory from nvidia-smi.", {}, []),
+        fn(
+            "lookup_cve",
+            "Look up the REAL CVE for the exploited vector in NVD (returns id, CVSS score, summary). "
+            "Describe the exploit in plain words, e.g. 'unauthenticated Jupyter/Ray notebook remote code execution'.",
+            {"keyword": {"type": "string"}}, [],
+        ),
+        fn(
+            "mining_impact",
+            "Get the live Monero price and the $/hour value of the stolen GPU compute, to quantify the attack's real-world cost.",
+            {"hours": {"type": "number", "description": "hours the GPU was pinned; default 1"}}, [],
+        ),
         fn("delete_pod", "Delete a pod. Autonomous only for unknown (attacker) pods.", {**nm, **ns}, ["name"]),
         fn("quarantine_pod", "Isolate a pod with a deny-all NetworkPolicy.", {**nm, **ns}, ["name"]),
         fn("delete_cronjob", "Delete a CronJob not on the allowlist.", {**nm, **ns}, ["name"]),
@@ -653,7 +702,7 @@ _SCENARIO = (
 # Tool subsets per stage. Triage and the Investigator only look + update our own paperwork;
 # ONLY the Advisor gets the mutating tools, so the approve/executor gate lives in one place.
 _TRIAGE_TOOLS = READ_TOOLS | {"update_incident_record"}
-_INVESTIGATOR_TOOLS = READ_TOOLS | {"update_scope"}
+_INVESTIGATOR_TOOLS = READ_TOOLS | ENRICH_TOOLS | {"update_scope"}  # forensics also enriches via NVD / price APIs
 _ADVISOR_TOOLS = set(_RAW) | {"consult_investigator"}  # every cluster tool + the two-way consult
 
 TRIAGE_PROMPT = _SCENARIO + (
@@ -672,8 +721,13 @@ INVESTIGATOR_PROMPT = _SCENARIO + (
     "notebook, node were touched, and whether there is evidence of exfiltration or persistence "
     "(a CronJob). Record what you find with update_scope using exactly those asset ids and a status "
     "of clean|investigating|exfiltrated|encrypted|contained. Do NOT contain anything — no deleting, "
-    "quarantining or revoking. Finish with a handoff to the Advisor: the confirmed scope, the likely "
-    "root cause, and the containment actions needed in priority order. Be terse."
+    "quarantining or revoking.\n\n"
+    "ENRICH with external services: call lookup_cve to identify the REAL CVE for the exploited vector "
+    "(the exposed, unauthenticated notebook/Ray dashboard — the ShadowRay bug) and mining_impact to "
+    "get the live Monero price and the $/hour of stolen GPU compute. Include the CVE id + CVSS and the "
+    "$ impact in your handoff so the Advisor can record them.\n\n"
+    "Finish with a handoff to the Advisor: the confirmed scope, the CVE + impact, the likely root "
+    "cause, and the containment actions needed in priority order. Be terse."
 )
 
 # Used when the Advisor asks the Investigator a mid-response follow-up (the two-way exchange).
@@ -697,8 +751,10 @@ ADVISOR_PROMPT = _SCENARIO + (
     "ROOT CAUSE: deleting the attacker's objects is not enough while the stolen token still works. "
     "Once you have contained the attacker's pods, CALL revoke_service_account (it routes to a human "
     "for approval; that is expected). Do not just list it as a next step. Advance the phase with "
-    "update_incident_record (containment -> eradication) and list next steps. When containment is "
-    "done, stop calling tools and give a one-paragraph summary."
+    "update_incident_record (containment -> eradication) and list next steps. Record the CVE the "
+    "Investigator found as the incident `vector` via update_incident_record (e.g. 'CVE-2023-48022 — "
+    "unauthenticated notebook RCE'). When containment is done, stop calling tools and give a "
+    "one-paragraph summary that states the CVE and the $ compute impact."
 )
 
 
@@ -1051,11 +1107,17 @@ def metrics() -> dict:
     """
     rec = store.record
     detected = _parse_ts(rec.detectedAt) if rec and rec.detectedAt else None
+    # A labeled, conservative baseline for a *manual* response (triage + investigate + contain by a
+    # human on the CLI). Not a measured number — it's the bar the agent beats. ~15 min.
+    _MANUAL_BASELINE_S = 900
+    _GPU_USD_PER_HOUR = 0.526  # Tesla T4 on-demand cloud rate (mirrors enrich._T4_USD_PER_HOUR)
     empty = {
         "detectedAt": rec.detectedAt if rec else None, "firstContainedAt": None,
         "timeToContainSeconds": None, "detectionCadenceSeconds": _DETECTION_CADENCE_S,
         "containmentActions": {"autonomous": 0, "approved": 0, "total": 0},
         "approvals": {"total": 0, "meanTimeToApproveSeconds": None}, "gpuHoursSaved": 0.0,
+        "dollarsSaved": 0.0, "gpuUsdPerHour": _GPU_USD_PER_HOUR,
+        "manualBaselineSeconds": _MANUAL_BASELINE_S, "speedupVsManual": None,
     }
     if detected is None:
         return empty
@@ -1084,6 +1146,7 @@ def metrics() -> dict:
     # GPU-hour of mining prevented. Grows live. Upgrade: integrate real utilization over the window.
     gpu_hours_saved = round((now - first_contain).total_seconds() / 3600, 2) if first_contain else 0.0
 
+    speedup = round(_MANUAL_BASELINE_S / ttc, 1) if ttc and ttc > 0 else None
     return {
         "detectedAt": rec.detectedAt,
         "firstContainedAt": contain[0]["ts"] if contain else None,
@@ -1092,4 +1155,8 @@ def metrics() -> dict:
         "containmentActions": {"autonomous": autonomous, "approved": approved, "total": len(contain)},
         "approvals": {"total": len(pending), "meanTimeToApproveSeconds": mean_approve},
         "gpuHoursSaved": gpu_hours_saved,
+        "dollarsSaved": round(gpu_hours_saved * _GPU_USD_PER_HOUR, 2),
+        "gpuUsdPerHour": _GPU_USD_PER_HOUR,
+        "manualBaselineSeconds": _MANUAL_BASELINE_S,
+        "speedupVsManual": speedup,
     }
