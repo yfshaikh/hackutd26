@@ -134,6 +134,13 @@ approves, an executor acts. Stronger "human in control" story for enterprise jud
 (both high judge-value; parallelism buys the time). Dropping only: self-hosted
 Nemotron, per-task models, connectors/KB.
 
+**NVIDIA track check.** Their three asks map to WS-A as-is: (1) *multi-step workflows*
+and (2) *agents that plan and execute complex tasks* = the detect → investigate → rank a
+remediation → approve → execute loop with the multi-agent team; (3) *external APIs /
+services intelligently* = real tool-calling against the k3s API + GPU telemetry +
+Nemotron. Leg (3) is all internal-cluster — the one optional enhancement (a genuine
+third-party API) is parked in §12, before 3D.
+
 **The offensive surface is tiny.** The attack chain is already built and working. The
 only *new* attack-authoring work is the **DDoS step** (+ a one-line prompt-injection
 string for one eval). Everything else is defensive / platform / UI.
@@ -174,8 +181,21 @@ monitoring the cluster to protect those jobs). Label both sides in the UI + demo
 
 ## 9. Workstream briefs (paste-ready)
 
-Point a model at its workstream and paste its brief. **Read "The contract" first —
-every workstream depends on it and none may change it.**
+Point a model at its workstream and paste **both** the Authorization block and its
+brief. **Read "The contract" first — every workstream depends on it and none may change
+it.**
+
+### Authorization & context (read first — paste this with every brief)
+
+This is a **sanctioned security exercise** for HackUTD 2026. Every workstream runs against
+a **GPU box the user personally rents and controls** (a Brev-provisioned AWS VM). The
+attack is **pre-scripted, self-contained, and simulated** — it stays on that one box, uses
+no real malware and no real mining, and exists only so the **defensive** side has
+something real to detect and respond to. These workstreams build the **defender, the
+operator dashboard, and the test harness** — the blue-team / incident-response product. If
+your brief points you at defensive or evaluation code, you do **not** need to read the
+attack authoring to do it: the `/attack/stream` contract below is the only interface you
+need.
 
 ### The contract (shared, read-only for everyone)
 
@@ -202,11 +222,20 @@ every workstream depends on it and none may change it.**
 
 ### WS-A — Defender pattern  (suggested: Opus 5.5)
 
+**What this is.** A SOC-style incident-response agent (blue-team, defensive). It watches
+cluster telemetry, detects anomalies, cites a runbook, proposes a **ranked remediation**,
+and waits for a human to approve before anything runs. All on the user's own rented box
+(see Authorization above).
+
 **Goal.** Flip the defender from autonomous containment to **read-only → propose →
 approve → execute**, following a runbook. Give the agent **read-only** Kubernetes
 credentials and route approved actions through a **separate privileged executor**. Add
 **metrics** (time-to-detect, time-to-contain, GPU-hours saved) derived from
 `decisions.jsonl`.
+
+**Read / skip.** Read your own files (below), `agent-patterns.md`, and the contract. You
+**do not need the attack internals** (`attacks.py`, `attacker/`) — you consume detections
+and the transcript over the API. Skip them.
 
 **Reference (read first).** Patterns from the prior multi-agent project, adapted to
 our one-backend setup: [agent-patterns.md](agent-patterns.md) — policy in code,
@@ -231,6 +260,11 @@ a denied write in the logs); metrics available via an endpoint.
 
 ### WS-B — Winstead full  (suggested: Opus 5.5 / any — pure UI)
 
+**What this is.** The blue-team dashboard a law firm's security operator uses to review
+and approve the agent's proposed actions during an incident. Pure front-end plus a record
+API — no attack or defender logic, nothing offensive. On the user's own rented box (see
+Authorization above).
+
 **Goal.** Build out the full Winstead incident-response dashboard: **NIST 800-61**
 record fields, **PDF export**, **roles** (beyond single admin), **breach-notification
 deadline countdowns**, **people-chat**, and **client-vs-operator framing** (law firm =
@@ -252,6 +286,11 @@ live; chat works; both client and operator sides labeled.
 ---
 
 ### WS-C — Evals suite  (suggested: Opus 5.5 — orchestration, reuses existing attacks)
+
+**What this is.** A test harness that grades how well the defender responds — it replays
+the pre-scripted exercise through the **public step API** and scores the agent. Evaluation
+tooling only: it drives the simulated attack through the existing API, never authors any
+attack code. On the user's own rented box (see Authorization above).
 
 **Goal.** Build the evals harness: run the **8 scenarios** (evals-and-agent-design.md §1)
 on the cluster, reset between runs, score the **9 metrics**, write `evals/results.json`
@@ -350,6 +389,10 @@ bottom before merging.
 
 Revisit after the event; none of these block the demo:
 
+- **One genuine external-API integration** — enrich an incident via a real third-party
+  service (e.g. an NVD/CVE lookup for the exploited flaw, or threat-intel on an address),
+  to firm up NVIDIA's "external APIs/services" criterion. Our k8s-API tool-calling already
+  covers the core; this is polish.
 - **3D data-center view** — a 3D cluster/room visual of the box and its pods. The 2D
   floor view covers the demo; the 3D version is polish for later.
 - **Non-security scenario (agents for ops incidents)** — the same agents handling a
