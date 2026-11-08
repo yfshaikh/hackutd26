@@ -1,6 +1,6 @@
 # Data exfiltration (model weights / client data leaving the cluster)
 
-**Signals:** a pod other than `model-server` mounting the `model-weights` PVC; outbound transfer to an unknown host; drop-site evidence (`received … model.safetensors`).
+**Signals:** a pod other than `model-server` **mounting the `model-weights` PVC**; `curl`/`PUT`/upload in its command; outbound transfer to an unknown host; drop-site evidence (`received … model.safetensors`). **NOT this if** nothing mounts the weights.
 
 **Severity:** critical. **Legal clock:** confirmed exfiltration of client data starts the 72-hour client-notification deadline — the record sets it automatically.
 

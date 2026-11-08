@@ -3,9 +3,10 @@
 // Flow: break in (STEP 0) -> once the token is stolen, the four payloads appear UNDER the log;
 // pick ONE, its logs replace the break-in logs, the buttons hide, and you can run another attack
 // (back to the picker) or reset to choose again.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { API, getRecon, getSteps, resetAll, runStep, streamTranscript } from "./api";
 import type { AttackStep, Entry, Recon, StepId } from "./api";
+import LootPanel from "./LootPanel";
 
 const PLAYBOOK: Record<StepId, string> = {
   "gain-access": "Find an unauthenticated notebook and read the pod's Kubernetes token.",
@@ -54,6 +55,26 @@ function entryNode(e: Entry): ReactNode {
   return <div className="ln out">{linkify(e.text)}</div>;
 }
 
+// Copy the raw code of a folded block. Lives in the <summary>, so it must not also toggle
+// the fold — stop the click there and prevent the default <summary> behaviour.
+function CopyCode({ code }: { code: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(code);
+      setDone(true);
+      setTimeout(() => setDone(false), 1200);
+    } catch { /* clipboard blocked (no https / permissions): leave the button as-is */ }
+  };
+  return (
+    <button type="button" className="code-copy" onClick={copy} aria-label="Copy code">
+      {done ? "copied" : "copy"}
+    </button>
+  );
+}
+
 // One revealed line in the terminal, keeping the entry kind so we can group/reveal it.
 type Item = { key: string; kind: string; text: string; node: ReactNode };
 
@@ -76,9 +97,13 @@ function renderItems(items: Item[]): ReactNode[] {
     }
     const run = items.slice(i, last + 1);
     const lines = run.reduce((n, it) => n + (it.kind === "code" ? it.text.split("\n").length : 1), 0);
+    const code = run.filter((it) => it.kind === "code").map((it) => it.text).join("\n");
     out.push(
       <details className="code-block" key={items[i].key}>
-        <summary>▸ code · {lines} lines</summary>
+        <summary>
+          <span>▸ code · {lines} lines</span>
+          <CopyCode code={code} />
+        </summary>
         {run.map((it) => <div key={it.key}>{it.node}</div>)}
       </details>,
     );
@@ -91,7 +116,7 @@ const bootLines = (target?: string) => [
   { kind: "sys", text: "ZERO DAY OS 26.11 · HackUTD red team build" },
   { kind: "ok", text: "[ ok ] tailscale up  100.64.0.7" },
   { kind: "ok", text: "[ ok ] target in range  " + (target ?? "scanning…") },
-  { kind: "sys", text: "Law firm: Halloran & Vance LLP · k3s GPU cluster" },
+  { kind: "sys", text: "Law firm: Winstead PC · k3s GPU cluster" },
   { kind: "cmd", text: "./zeroday --target lawfirm" },
 ];
 
@@ -251,6 +276,8 @@ export default function Terminal({ booted, onClose }: { booted: boolean; onClose
           {booted && !settled && <span className="caret" aria-hidden />}
         </div>
       )}
+
+      {access && <LootPanel active={connected && access} />}
 
       {connected && booted && (
         <div className="actions">

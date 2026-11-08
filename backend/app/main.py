@@ -44,6 +44,7 @@ from .hub import store
 from .routes_defender import router as defender_router
 from .routes_cluster import router as cluster_router
 from .routes_incident import router as incident_router
+from .routes_loot import router as loot_router
 from .transcript import transcript
 from .models import (
     AttackResult,
@@ -72,6 +73,8 @@ app.include_router(incident_router)
 app.include_router(defender_router)
 # Read-only pod inspection for the floor drawer (specs + logs).
 app.include_router(cluster_router)
+# Attacker app's live loot + victim counters (GET /attack/loot; no auth, by design).
+app.include_router(loot_router)
 
 _bg_tasks: list[asyncio.Task] = []
 _singleton_lock = None

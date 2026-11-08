@@ -245,15 +245,38 @@ data:
   # drop.py: the attacker's "server on the internet". An HTTP server that accepts a PUT and
   # writes the body to /loot, logging "received <file> <N> bytes". That log line is the proof
   # the defender reads to confirm how many bytes of model weights were stolen.
+  #
+  # While the upload is in flight it prints `progress <file> <got>/<total> bytes` every ~8 MB
+  # so the attacker app can watch the bar fill. That word is deliberately NOT "received":
+  # the defender's evidence check parses the first line containing "received" and would mark
+  # the weights exfiltrated early, with a partial byte count.
+  #
+  # After writing, it lists the archive's entries with zipfile (a .pt is a zip). It never
+  # unpickles or torch.loads the file — only the zip central directory is read. The entries
+  # are printed BEFORE the final "received" line so the defender's tail-of-log read still
+  # finds the true byte count after the listing.
   drop.py: |
-    import os
+    import os, zipfile
     from http.server import BaseHTTPRequestHandler, HTTPServer
+    STEP = 8 << 20  # print progress every ~8 MB
     class H(BaseHTTPRequestHandler):
         def do_PUT(self):
-            n = int(self.headers["Content-Length"]); left = n
-            with open("/loot/" + os.path.basename(self.path), "wb") as f:
+            name = os.path.basename(self.path); dest = "/loot/" + name
+            n = int(self.headers["Content-Length"]); left = n; got = 0; shown = 0
+            with open(dest, "wb") as f:
                 while left:
-                    chunk = self.rfile.read(min(left, 1 << 20)); f.write(chunk); left -= len(chunk)
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk: break
+                    f.write(chunk); left -= len(chunk); got += len(chunk)
+                    if got - shown >= STEP:
+                        shown = got
+                        print("progress", self.path, "%d/%d" % (got, n), "bytes", flush=True)
+            try:
+                with zipfile.ZipFile(dest) as z:
+                    for info in z.infolist():
+                        print("entry", info.filename, info.file_size, "bytes", flush=True)
+            except zipfile.BadZipFile:
+                pass
             print("received", self.path, n, "bytes", flush=True)
             self.send_response(201); self.end_headers()
         def log_message(self, *a): pass

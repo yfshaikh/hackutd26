@@ -9,7 +9,7 @@ export function Framing() {
       <div className="framing-grid">
         <div className="frame-card client">
           <span className="frame-tag">Client</span>
-          <strong>Halloran &amp; Vance LLP</strong>
+          <strong>Winstead PC</strong>
           <span>
             Runs the AI workloads on the GPU cluster: model serving, fine-tuning and research
             notebooks. Their client data and model IP are what the attacker is after.

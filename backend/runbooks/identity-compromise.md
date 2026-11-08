@@ -1,6 +1,6 @@
 # Identity compromise (stolen service-account token)
 
-**Signals:** pods or CronJobs created by the `notebook-dev` service account that no researcher launched; an exposed, unauthenticated notebook (Jupyter/Ray — ShadowRay, CVE-2023-48022).
+**Signals:** **always present alongside the above** — attacker objects were created with the notebook's `notebook-dev` service account (root cause); an exposed, unauthenticated notebook (Jupyter/Ray — ShadowRay, CVE-2023-48022).
 
 **Severity:** high on its own; it is the **root cause** behind every other runbook here.
 

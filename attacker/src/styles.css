@@ -132,7 +132,12 @@ button { font: inherit; color: inherit; }
 .code-block { margin: 4px 0; border: 1px solid rgba(219, 196, 255, .16); border-radius: 4px;
   background: rgba(120, 40, 255, .06); overflow: hidden; }
 .code-block > summary { cursor: pointer; list-style: none; padding: 3px 8px; color: var(--lav);
-  font-size: 11px; letter-spacing: .04em; user-select: none; }
+  font-size: 11px; letter-spacing: .04em; user-select: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.code-copy { cursor: pointer; flex: none; font: inherit; font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); background: rgba(120, 40, 255, .12);
+  border: 1px solid rgba(219, 196, 255, .18); border-radius: 3px; padding: 1px 7px; }
+.code-copy:hover { color: var(--ink); background: rgba(120, 40, 255, .22); }
 .code-block > summary::-webkit-details-marker { display: none; }
 .code-block > summary:hover { background: rgba(120, 40, 255, .14); color: var(--ink); }
 .code-block[open] > summary { border-bottom: 1px solid rgba(219, 196, 255, .12); margin-bottom: 4px; }
@@ -184,6 +189,28 @@ button { font: inherit; color: inherit; }
 .empty h2 { color: var(--red); margin: 0 0 6px; font: italic 700 16px var(--display); }
 .empty p { color: var(--muted); font-size: 12px; }
 code { font-family: var(--mono); color: var(--ink); }
+
+/* ---- live loot + victim panels (attacker only) ---- */
+.loot { display: flex; gap: 8px; padding: 8px 12px; border-top: 1px solid rgba(219,196,255,.12); }
+.loot-card { flex: 1 1 0; min-width: 0; padding: 7px 9px 8px; background: rgba(120,40,255,.08);
+  box-shadow: inset 0 0 0 1px rgba(219,196,255,.14); border-radius: 6px; }
+.loot-card header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.loot-card header b { font: 600 10px var(--display); letter-spacing: .16em; text-transform: uppercase; color: var(--pink); }
+.loot-card header span { color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.loot-track { height: 7px; background: #150f2b; border-radius: 4px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(219,196,255,.12); }
+.loot-track i { display: block; height: 100%; background: linear-gradient(90deg, var(--purple), var(--cyan)); transition: width .35s ease-out; }
+.loot-track i.hot { background: linear-gradient(90deg, #8a1238, var(--red)); }
+.loot-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.loot-meta span:last-child { color: var(--lav); }
+.loot-count { font: 700 20px/1.1 var(--display); color: var(--red); margin-bottom: 5px; }
+.loot-count small { font: 500 10px var(--mono); color: var(--muted); }
+.loot-entries { margin-top: 6px; }
+.loot-entries-head { color: var(--green); font-size: 10px; letter-spacing: .04em; margin-bottom: 3px; }
+.loot-entries ul { margin: 0; padding: 0; list-style: none; max-height: 74px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: #3a2f5c transparent; }
+.loot-entries li { display: flex; justify-content: space-between; gap: 10px; font-size: 10px; color: var(--muted); }
+.loot-entries li code { font-size: 10px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.loot-entries li span { flex: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .rig, .lid { transition-duration: .01s; }

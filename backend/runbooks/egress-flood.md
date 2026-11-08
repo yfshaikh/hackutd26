@@ -1,6 +1,6 @@
 # Egress flood (cluster used to attack someone else)
 
-**Signals:** an unowned pod opening many outbound connections; logs like `EGRESS-FLOOD`, connection counters, a single external target host/port; little or no GPU use.
+**Signals:** an unowned pod with **no GPU and no PVC**; logs with `EGRESS-FLOOD`, connection counters, a single external `target=host:port`; little or no GPU use.
 
 **Severity:** high — the firm's infrastructure is attacking a third party (liability, provider abuse reports).
 

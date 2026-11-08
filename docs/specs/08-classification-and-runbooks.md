@@ -99,3 +99,16 @@ the Incident page.
 Also: no "reached its step limit"; containment still happens; one revoke card per incident. Report the table with
 PASS/FAIL and the exact Investigator handoff line for any FAIL. If a scenario still fails after the prompt changes,
 report it — don't add code that classifies for the agents (that's a separate decision for the user).
+
+## Also fix in this lane: detection fail-open on "terminating" objects (security review)
+
+`_detect()` currently drops every pod/CronJob that has `metadata.deletion_timestamp` set. An attacker can add a
+finalizer or a huge `terminationGracePeriodSeconds` so a pod sits in Terminating while it keeps running — and
+detection never sees it again. Keep the original intent (don't re-flag pods the defender just deleted) but fail closed:
+
+- Skip a terminating pod ONLY if it has no `metadata.finalizers` AND
+  `now < deletion_timestamp + (deletion_grace_period_seconds or 30) + 30 s slack`. Otherwise evaluate it like any
+  other pod (it stays rogue).
+- Skip a terminating CronJob only if it has no finalizers; otherwise flag it.
+- Leave one runnable check behind (e.g. a small `__main__`/assert-based self-check with fake pod objects: fresh
+  delete → skipped; past deadline → flagged; finalizer present → flagged). No real cluster needed for it.

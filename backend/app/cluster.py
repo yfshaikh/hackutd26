@@ -157,6 +157,14 @@ def _iso(value) -> str | None:
     return value.isoformat() if value else None
 
 
+# Annotations that can embed a whole object spec (env values included) — never sent to the console.
+_HIDDEN_ANNOTATIONS = {"kubectl.kubernetes.io/last-applied-configuration"}
+
+
+def _safe_annotations(values) -> dict[str, str]:
+    return {k: v for k, v in _str_map(values).items() if k not in _HIDDEN_ANNOTATIONS}
+
+
 def _str_map(values) -> dict[str, str]:
     return {str(k): str(v) for k, v in (values or {}).items() if v is not None}
 
@@ -365,7 +373,7 @@ def build_pod_detail(namespace: str, name: str) -> PodDetail:
         createdAt=_iso(pod.metadata.creation_timestamp),
         startTime=_iso(pod.status.start_time) if pod.status else None,
         labels=_str_map(pod.metadata.labels),
-        annotations=_str_map(pod.metadata.annotations),
+        annotations=_safe_annotations(pod.metadata.annotations),
         containers=[_container_detail(c, statuses) for c in (spec.containers or [])],
         volumes=[_volume_detail(v) for v in (spec.volumes or [])],
         conditions=[
@@ -441,7 +449,7 @@ def build_cluster(gpu_history: list[float], gpus: list[Gpu] | None = None) -> Cl
     if gpus is None:
         gpus, _total = read_gpus()
     node = build_node(gpus)
-    return Cluster(name="halloran-vance-gpu", nodes=[node], pods=list_pods(), gpuHistory=gpu_history)
+    return Cluster(name="winstead-gpu", nodes=[node], pods=list_pods(), gpuHistory=gpu_history)
 
 
 # --- Protected assets (scope) ----------------------------------------------

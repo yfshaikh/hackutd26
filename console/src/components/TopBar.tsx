@@ -48,6 +48,7 @@ export function TopBar() {
         </span>
       </div>
       <nav className="nav" aria-label="Main">
+        <Link href="/briefing">Briefing</Link>
         <Link href="/">Command center</Link>
         <Link href="/floor">Floor</Link>
         <Link href="/evals">Evals</Link>

@@ -33,7 +33,7 @@ data:
         conn, _ = srv.accept()
         conn.close()
         n += 1
-        if n % 25 == 0:
+        if n % 5 == 0:   # often enough that the attacker's victim counter moves smoothly
             print("sink accepted", n, "connections", flush=True)
 ---
 apiVersion: apps/v1

@@ -1,6 +1,6 @@
 # Cryptojacking (stolen GPU compute)
 
-**Signals:** an unowned pod (no `owner` label) requesting `nvidia.com/gpu`; GPU utilization pinned near 100%; a process disguised with a benign name (`kube-sync`, `log-rotate`); miner strings (`xmrig`, `stratum+tcp`, matrix-multiply loops) in its logs.
+**Signals:** an unowned pod (no `owner` label) **requesting `nvidia.com/gpu`**; GPU utilization pinned near 100%; miner strings (`[matmul]`, `xmrig`, `stratum+tcp`) in its logs. **NOT this if** the pod has no GPU request — an unowned pod alone is every scenario, not mining.
 
 **Severity:** high. Raise to critical if the same token also touched data (see data-exfiltration).
 

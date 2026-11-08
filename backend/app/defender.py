@@ -539,6 +539,20 @@ def _pending_summary() -> str:
     return f"Already awaiting human approval — do NOT propose these again: {items}."
 
 
+def _hypotheses_summary() -> str:
+    """The hypotheses the Investigator filed, name + verdict + evidence, for the Advisor's context.
+    This is passing the pipeline's state along, not deciding anything for the Advisor — it still
+    maps each name to its runbook and chooses the containment itself."""
+    rec = store.record
+    if not rec or not rec.hypotheses:
+        return "Filed hypotheses: (none)"
+    items = "; ".join(
+        f"{h.name} = {h.verdict}" + (f" — {h.evidence}" if h.evidence else "")
+        for h in rec.hypotheses
+    )
+    return f"Filed hypotheses: {items}"
+
+
 def _pod_logs_for(tool: str, args: dict) -> str | None:
     """Relevant pod logs for a pod-targeting tool (Task 3). Read before deletion."""
     if tool not in ("delete_pod", "quarantine_pod"):
@@ -794,7 +808,7 @@ def _tool_schemas() -> list[dict]:
             "File one hypothesis you are weighing, with its verdict and the evidence behind it. Call it "
             "when you form a hypothesis (verdict 'possible') and AGAIN whenever a tool result changes it "
             "('likely', 'confirmed' or 'ruled_out'). Same name = update, not a duplicate.",
-            {"name": {"type": "string", "description": "short label, e.g. 'cryptojacking', 'data exfiltration', 'persistence', 'lateral movement'"},
+            {"name": {"type": "string", "description": "exactly one scenario id: 'cryptojacking', 'data-exfiltration', 'persistence', 'egress-flood'"},
              "verdict": {"type": "string", "enum": sorted(_VERDICTS)},
              "evidence": {"type": "string", "description": "the concrete tool output that supports this verdict, one sentence"}},
             ["name", "verdict", "evidence"],
@@ -816,6 +830,18 @@ _SCENARIO = (
     "workloads in the 'lawfirm' Kubernetes namespace using a stolen service-account token. You are "
     "one agent in a three-stage response team (Triage -> Investigator -> Advisor); do only your own "
     "stage's job and hand off cleanly.\n\n"
+    "ATTACK SIGNATURES — classify by the DISCRIMINATING signal, not by the pod being unowned:\n"
+    "| id | Strong signals (any one is enough to call it likely) | NOT this if |\n"
+    "|----|------|------|\n"
+    "| cryptojacking | unowned pod requesting `nvidia.com/gpu`; GPU pinned ~100%; logs with `[matmul]`, `xmrig`, `stratum` | pod has no GPU request |\n"
+    "| data-exfiltration | non-model-server pod mounting the `model-weights` PVC; `curl`/`PUT`/upload in its command; drop-site evidence | nothing mounts the weights |\n"
+    "| persistence | a CronJob not on the allowlist; pods named `<cronjob>-<digits>-xxxxx`; a pod that reappears after deletion | no non-allowlisted CronJob |\n"
+    "| egress-flood | unowned pod with no GPU and no PVC; logs with `EGRESS-FLOOD`, connection counters, one external `target=host:port` | — |\n"
+    "| identity-compromise | always present alongside the above: attacker objects were created with the notebook's service account (root cause) | — |\n\n"
+    "An unowned pod is NOT evidence of any one scenario by itself — every attack creates one. "
+    "Classify by the discriminating signal (GPU request, weights mount, CronJob, flood logs). "
+    "Read the pod (describe + logs) before you name a category. A completed pod (phase Succeeded) "
+    "still has readable logs — read them.\n\n"
 )
 
 # Tool subsets per stage. Triage and the Investigator only look + update our own paperwork;
@@ -827,11 +853,15 @@ _ADVISOR_TOOLS = set(_RAW) | {"consult_investigator"}  # every cluster tool + th
 TRIAGE_PROMPT = _SCENARIO + (
     "You are TRIAGE, the first responder. Size up the incident fast with the read tools, then set "
     "the severity, phase and categories on the incident record (call update_incident_record). Do "
-    "NOT contain anything and do not touch scope — that is the Investigator's and Advisor's job. "
-    "Allowed phases include detection and containment; categories like 'unauthorized-access', "
-    "'cryptojacking', 'data-exfiltration', 'persistence'. Never lower severity below 'high' once an "
-    "unknown GPU pod is present. Finish with a 2-3 sentence handoff to the Investigator: what you "
-    "believe happened and exactly what to dig into. Be terse."
+    "NOT contain anything and do not touch scope — that is the Investigator's and Advisor's job.\n\n"
+    "CATEGORIES: do NOT set categories until you have run describe_pod AND get_pod_logs on each "
+    "unowned pod. Pick categories from the ATTACK SIGNATURES table ids — cryptojacking, "
+    "data-exfiltration, persistence, egress-flood — plus 'unauthorized-access'; add only what the "
+    "evidence you actually read supports (identity-compromise is the root cause, not a workload "
+    "category). Never lower severity below 'high' once an unknown GPU pod is present. Allowed "
+    "phases include detection and containment.\n\n"
+    "Finish with a 2-3 sentence handoff to the Investigator: what you believe happened, which "
+    "signature the evidence matches, and exactly what to dig into. Be terse."
 )
 
 INVESTIGATOR_PROMPT = _SCENARIO + (
@@ -840,37 +870,45 @@ INVESTIGATOR_PROMPT = _SCENARIO + (
     "describe_pod and get_pod_logs on the suspicious pod), NEVER prose. Do not state a conclusion or hand "
     "off until you have read the suspicious pod's details and logs with the tools — a hypothesis is not "
     "evidence. Each round, work like a detective:\n\n"
-    "1) COMPETING HYPOTHESES: the candidates are cryptojacking, data exfiltration, persistence and "
-    "lateral movement — more than one may be true at once. After your first reads, call "
-    "record_hypothesis for EACH candidate with verdict 'possible' (or 'ruled_out' if the evidence "
-    "already excludes it), citing the tool output.\n"
+    "1) COMPETING HYPOTHESES: the candidates are exactly the four scenario ids from the ATTACK "
+    "SIGNATURES table — cryptojacking, data-exfiltration, persistence, egress-flood. More than one may "
+    "be true at once. After your first reads, call record_hypothesis for EACH candidate with verdict "
+    "'possible' (or 'ruled_out' if the evidence already excludes it), citing the tool output. Use "
+    "those exact ids as the hypothesis names — no other names.\n"
     "2) NEXT DISCRIMINATING TOOL: choose the single next read (list_pods, describe_pod, get_pod_logs, "
     "gpu_status) that best separates the live hypotheses. The next tool must depend on what the last "
-    "result showed — never a stock sequence.\n"
+    "result showed — never a stock sequence. A completed pod (phase Succeeded) still has readable "
+    "logs — read them.\n"
     "3) UPDATE: whenever a result changes a hypothesis, call record_hypothesis again with the new "
-    "verdict ('likely', 'confirmed' or 'ruled_out') and the evidence. Before you hand off, every "
-    "candidate must have a final verdict. Branch on the evidence:\n"
-    "   - GPU pinned ~100% + an unowned GPU pod and no egress -> MINING branch: describe the pod and "
-    "     read its logs to confirm the miner command/image and GPU draw; size the impact.\n"
-    "   - Bytes leaving, or a non-model-server pod mounting the weights PVC -> EXFIL branch: find where "
-    "     it went (drop site) and what else the stolen token touched.\n"
-    "   - A non-allowlisted CronJob -> PERSISTENCE branch: find what it recreates and how (schedule, "
-    "     command, and the pods/jobs it owns).\n"
-    "   - Unexpected cross-namespace or RBAC access -> LATERAL MOVEMENT branch: scope what the token "
-    "     can reach.\n"
+    "verdict ('likely', 'confirmed' or 'ruled_out') and the evidence. Before you hand off, EVERY "
+    "candidate must have a final verdict — ruling one out with its 'NOT this if' evidence from the "
+    "table is expected and good. Branch on the discriminating signal:\n"
+    "   - The pod requests nvidia.com/gpu and the GPU is pinned -> CRYPTOJACKING branch: read its logs "
+    "     for miner strings ([matmul], xmrig, stratum) and size the impact.\n"
+    "   - A non-model-server pod mounts the model-weights PVC, or its command curls/PUTs to a drop "
+    "     site -> EXFIL branch: find the destination and the bytes sent.\n"
+    "   - A non-allowlisted CronJob, or a pod that reappears after deletion -> PERSISTENCE branch: "
+    "     record the schedule, command, and the pods/jobs it owns.\n"
+    "   - An unowned pod with no GPU and no PVC whose logs show EGRESS-FLOOD / connection counters to "
+    "     one external target=host:port -> EGRESS-FLOOD branch: record the target and duration.\n"
     "4) SCOPE: record each resolved branch with update_scope, using exactly the asset ids model-weights, "
     "training, notebook, node and a status of clean|investigating|exfiltrated|encrypted|contained. Put "
     "the evidence in the note.\n\n"
     "Everything relevant is in the 'lawfirm' namespace — the tools already default there, so do not "
     "inspect other namespaces. You have a limited number of tool rounds: be decisive, batch your "
     "lookups, and do not re-check something you already saw.\n\n"
-    "ENRICH inside the relevant branch: call lookup_cve to identify the REAL CVE for the exploited "
-    "vector (the exposed, unauthenticated notebook/Ray dashboard — the ShadowRay bug) and mining_impact "
-    "to get the live Monero price and the $/hour of stolen GPU compute. Include the CVE id + CVSS and "
-    "the $ impact in your handoff so the Advisor can record them.\n\n"
+    "ENRICH: call lookup_cve for every incident — it identifies the REAL CVE for the exploited vector "
+    "(the exposed, unauthenticated notebook/Ray dashboard — the ShadowRay bug). Call mining_impact ONLY "
+    "when cryptojacking is confirmed or likely; never call it for a pure egress-flood, exfiltration or "
+    "persistence incident. Include the CVE id + CVSS in your handoff, and the $ impact only if you "
+    "sized mining.\n\n"
     "Do NOT contain anything — no deleting, quarantining or revoking.\n\n"
-    "Finish with a handoff to the Advisor: the confirmed hypothesis set in priority order, the evidence "
-    "for each, the confirmed scope, the CVE + impact, and the containment actions needed. Be terse."
+    "Finish with a handoff to the Advisor. Its FIRST line must be exactly `CONFIRMED: <ids>` — the "
+    "comma-separated hypothesis ids with verdict confirmed or likely, plus identity-compromise (the "
+    "attacker objects were created with the notebook's service account), e.g. `CONFIRMED: egress-flood, "
+    "identity-compromise`. Then, terse: the evidence per confirmed hypothesis, the ruled-out list (one "
+    "clause each), the confirmed scope, the CVE, and the containment actions needed. Use the table ids "
+    "as the names so the Advisor can map each hypothesis to its runbook."
 )
 
 # Used when the Advisor asks the Investigator a mid-response follow-up (the two-way exchange).
@@ -882,12 +920,16 @@ CONSULT_PROMPT = _SCENARIO + (
 
 ADVISOR_PROMPT = _SCENARIO + (
     "You are the ADVISOR, the containment lead. Triage has classified the incident and the "
-    "Investigator has mapped the scope (both are in your context). ACT FIRST: immediately "
-    "quarantine and then delete the unknown attacker pod(s) (owner=none) — stop the bleeding "
-    "before anything else. Only AFTER that, handle persistence and identity.\n\n"
-    "RUNBOOKS: in your FIRST round, call get_runbook ONLY for the scenario(s) the Investigator actually "
-    "confirmed — usually one or two, never all of them — alongside your first containment call, and "
-    "follow that runbook's Contain order. Name the runbooks you followed in your final summary.\n\n"
+    "Investigator has mapped the scope (both are in your context); the filed hypotheses with their "
+    "verdicts are listed in your context too.\n\n"
+    "RUNBOOKS FIRST: in your FIRST round, call get_runbook for EVERY hypothesis with verdict "
+    "confirmed or likely, plus identity-compromise — and nothing for the ruled-out ones. Do not "
+    "contain anything in round 1; the reads are instant and batched. Map each hypothesis name to the "
+    "runbook with the same id, and from round 2 follow each runbook's Contain order. Name the "
+    "runbooks you followed in your final summary.\n\n"
+    "CONTAINMENT: quarantine and then delete the unknown attacker pod(s) (owner=none) for the "
+    "confirmed scenario — stop the bleeding; delete a non-allowlisted CronJob BEFORE the pods it "
+    "spawns; then handle identity. Never delete or disrupt pods owned by 'law-firm' or 'platform'.\n\n"
     "You MAY call consult_investigator(question) AT MOST ONCE, and only if you genuinely cannot "
     "act without a detail their handoff did not cover. Do not use it to re-ask what they already "
     "told you, and never consult twice — contain instead.\n\n"
@@ -902,10 +944,12 @@ ADVISOR_PROMPT = _SCENARIO + (
     "update_incident_record (containment -> eradication) and list next steps. Record the CVE the "
     "Investigator found as the incident `vector` via update_incident_record (e.g. 'CVE-2023-48022 — "
     "unauthenticated notebook RCE'). In that same update, fill the record for the firm's partners: "
-    "`summary` (2-3 sentences, what happened), `impact` (what was lost or stolen, incl. the $ compute "
-    "figure and whether client data left), `rootCause` (the exploited weakness + the stolen token), and "
-    "`nextSteps` (at most 4, the remaining human work). When containment is done, stop calling tools "
-    "and give a one-paragraph summary that states the CVE and the $ compute impact."
+    "`summary` (2-3 sentences, what happened), `impact` (the business impact APPROPRIATE TO THE "
+    "SCENARIO: compute $ for cryptojacking, what left and how big for exfiltration, target and "
+    "duration for a flood), `rootCause` (the exploited weakness + the stolen token), and `nextSteps` "
+    "(at most 4, the remaining human work). When containment is done, stop calling tools and give a "
+    "one-paragraph summary that states the CVE, the runbooks you followed, and that "
+    "scenario-appropriate impact."
 )
 
 
@@ -1164,7 +1208,7 @@ def run_agent(trigger: str) -> None:
         oai, role=ADVISOR, model=config.NEMOTRON_MODEL, system_prompt=ADVISOR_PROMPT,
         allowed=_ADVISOR_TOOLS, rounds=_ROUNDS[ADVISOR],
         context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\n"
-        f"Investigator findings:\n{inv or '(none)'}\n\n{_pending_summary()}\n\n"
+        f"Investigator findings:\n{inv or '(none)'}\n\n{_hypotheses_summary()}\n\n{_pending_summary()}\n\n"
         "Propose and execute the ranked remediation now.",
     )
     # The record's summary must never be blank: if the Advisor skipped filling it, its own
@@ -1219,6 +1263,7 @@ def run_agent(trigger: str) -> None:
             allowed=_ADVISOR_TOOLS, rounds=6,
             context=verify_base + f"\nTriage assessment:\n{triage or '(none)'}\n\n"
             f"Investigator findings:\n{inv or '(none)'}\n\n"
+            f"{_hypotheses_summary()}\n\n"
             f"Your earlier containment pass ended with:\n{advisor_summary or '(none)'}\n\n"
             f"VERIFY FINDINGS — these rogue objects are STILL present after your first pass:\n{detail}\n\n"
             f"{_pending_summary()}\n\n"
@@ -1238,18 +1283,72 @@ def run_agent(trigger: str) -> None:
 # server mounting the weights disk, (3) a GPU pinned at 100% by an unowned pod,
 # (4) a CronJob nobody put on the allowlist. The expensive AI only wakes up AFTER
 # a rule fires — the rules raise the alarm, the agent does the thinking.
+_MAX_GRACE = 30  # seconds; a larger terminationGracePeriodSeconds is treated as an attacker hiding
+
+
+def _terminating_is_settled(obj, now: datetime | None = None) -> bool:
+    """True only when a terminating pod/CronJob is genuinely on its way out.
+
+    Fail CLOSED: an attacker can add a finalizer or a huge terminationGracePeriodSeconds
+    so the object sits in Terminating while its container keeps running — and the old
+    `deletion_timestamp is None` filter made detection blind to it forever. We skip a
+    terminating object ONLY if it has no finalizers, a grace period no larger than a
+    normal shutdown (_MAX_GRACE), AND its deletion deadline (grace + 30 s slack) has
+    not passed. Anything else is evaluated as rogue — the grace period comes from the
+    object's own spec, so an inflated value is an attacker keeping a "deleted" pod alive.
+    """
+    ts = getattr(obj.metadata, "deletion_timestamp", None)
+    if ts is None:
+        return False
+    if getattr(obj.metadata, "finalizers", None):
+        return False
+    grace = getattr(getattr(obj, "spec", None), "termination_grace_period_seconds", None)
+    if grace is None:
+        grace = 30
+    if grace > _MAX_GRACE:  # attacker-controlled: a real workload never needs this long to stop
+        return False
+    now = now or datetime.now(timezone.utc)
+    return now < ts + timedelta(seconds=grace + 30)
+
+
+def _selfcheck_terminating() -> None:
+    """Runnable, cluster-free check of the fail-closed terminating rule.
+
+    Run with: cd backend && uv run python -m app.defender
+    """
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc)
+
+    def obj(age: float | None, finalizers=None, grace: int | None = 30):
+        return SimpleNamespace(
+            metadata=SimpleNamespace(
+                deletion_timestamp=None if age is None else now - timedelta(seconds=age),
+                finalizers=finalizers,
+            ),
+            spec=SimpleNamespace(termination_grace_period_seconds=grace),
+        )
+
+    assert _terminating_is_settled(obj(0), now), "fresh delete must be skipped"
+    assert not _terminating_is_settled(obj(65), now), "past grace+slack must stay rogue"
+    assert not _terminating_is_settled(obj(0, finalizers=["example.com/hold"]), now), "finalizer must stay rogue"
+    assert not _terminating_is_settled(obj(0, grace=3600), now), "inflated grace period must stay rogue"
+    assert not _terminating_is_settled(obj(None), now), "a running pod is not terminating"
+    assert _terminating_is_settled(obj(50, grace=None), now), "missing grace defaults to 30 + 30 slack"
+    assert not _terminating_is_settled(obj(61, grace=None), now), "default grace deadline is enforced"
+    print("terminating-object fail-closed self-check: OK")
+
+
 def _detect() -> list[tuple[str, str]]:
     """Return list of (dedupe_key, human trigger) findings from real state."""
     findings: list[tuple[str, str]] = []
     core = admin_core()
     try:
-        # A pod that is already being deleted is not "still rogue": the API keeps it
-        # (with a deletionTimestamp) while the container shuts down, which for a GPU
-        # pod can be tens of seconds. Counting it makes the verify pass and the 4 s
-        # detector re-escalate a workload that is already gone.
+        # Skip an object only when it is genuinely leaving: a finalizer or a long grace
+        # period can keep a "Terminating" pod running, so those stay visible to detection.
         pods = [
             p for p in core.list_namespaced_pod(config.LAWFIRM_NS).items
-            if p.metadata.deletion_timestamp is None
+            if not _terminating_is_settled(p)
         ]
     except ApiException:
         return findings
@@ -1272,9 +1371,9 @@ def _detect() -> list[tuple[str, str]]:
     # cronjobs not on the allowlist
     try:
         for cj in admin_batch().list_namespaced_cron_job(config.LAWFIRM_NS).items:
-            # Same rule as pods: a CronJob being torn down (background GC) is not
-            # residual persistence, even if the API still returns it for a moment.
-            if cj.metadata.deletion_timestamp is not None:
+            # Same fail-closed rule as pods: a CronJob being torn down with no finalizers
+            # is not residual persistence; one held by a finalizer is still rogue.
+            if _terminating_is_settled(cj):
                 continue
             if cj.metadata.name not in config.CRONJOB_ALLOWLIST:
                 findings.append((f"rogue-cronjob:{cj.metadata.name}",
@@ -1492,3 +1591,9 @@ def metrics() -> dict:
         "manualBaselineSeconds": _MANUAL_BASELINE_S,
         "speedupVsManual": speedup,
     }
+
+
+if __name__ == "__main__":
+    # Cluster-free self-check for the fail-closed terminating-object rule.
+    # Run: cd backend && uv run python -m app.defender
+    _selfcheck_terminating()

@@ -50,7 +50,7 @@ NEMOTRON_FAST_MODEL = os.environ.get(
     "nvidia/nemotron-3-nano-30b-a3b" if USE_OPENROUTER else NEMOTRON_MODEL,
 )
 
-FIRM_NAME = "Halloran & Vance LLP"
+FIRM_NAME = "Winstead PC"
 
 # The exposed JupyterLab, reachable ONLY on the tailnet via the notebook-edge proxy
 # (deploy/15-notebook-edge.yaml). The attack drives the notebook through this.

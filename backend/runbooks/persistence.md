@@ -1,6 +1,6 @@
 # Persistence (attacker CronJob / backdoor)
 
-**Signals:** a CronJob not on the allowlist (`config.CRONJOB_ALLOWLIST`); pods that reappear after deletion; names chosen to look routine (`log-rotate`, `cache-gc`).
+**Signals:** a **CronJob not on the allowlist** (`config.CRONJOB_ALLOWLIST`); pods named `<cronjob>-<digits>-xxxxx`; a pod that **reappears after deletion**. **NOT this if** there is no non-allowlisted CronJob.
 
 **Severity:** high.
 

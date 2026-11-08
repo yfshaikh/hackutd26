@@ -31,7 +31,7 @@ export function Login() {
         <div>
           <h1>Out-of-band command center</h1>
           <p className="lede">
-            The secure war room for <strong>Halloran &amp; Vance LLP</strong> during a live incident.
+            The secure war room for <strong>Winstead PC</strong> during a live incident.
             It runs <strong>off the compromised network</strong> — email, phones, and file shares are
             assumed hostile, so this is where responders see what happened and coordinate the response.
           </p>
