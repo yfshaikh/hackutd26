@@ -9,16 +9,23 @@ Status key: **[ ]** not started · **[~]** partial / documented only · **[x]** 
 
 ---
 
-## 1. Open decisions (need your call before building)
+## 1. Decisions (updated as we make them)
 
-- [ ] **Which famous breach to replicate for initial access.**
-  Recommended: **ShadowRay** (real Ray Jobs API, matches our open-notebook chain).
-  Alternative: **Tesla 2018** (unauthenticated Kubernetes Dashboard).
-- [ ] **Evals first, or the multi-agent team first?** Can't do both well before judging.
-- [ ] **Add a non-security scenario?** A real power cap via `nvidia-smi -pl` (matches
-  NMC's power-grid example), or a preventative posture scan. Or neither.
-- [ ] **NMC "when [situation]…" template** — how we phrase the use case for judges.
-  (Workshop notes brain dump coming — see section 6.)
+**Made:**
+- [x] **Breach to replicate → ShadowRay 2.0.** One real case covering mining +
+  exfiltration + DDoS; finds GPUs via `nvidia-smi`. Anchors the demo and WS-D.
+  (Tesla 2018 / open K8s dashboard was the alternative.)
+- [x] **Evals vs. multi-agent team → both.** Splitting across models buys the time:
+  evals = **WS-C**, multi-agent Advisor = **WS-A** (the propose→approve step). No
+  longer an either/or.
+- [x] **Autonomy model → propose→approve.** Read-only agent, human approves actions,
+  like last project's approval flow.
+
+**Still open:**
+- [ ] **NMC "when [situation]…" one-liner** — how we phrase the use case for judges
+  (cross-cutting; notes in §6).
+
+(Non-security scenario and use-case-template moved to §12 Future.)
 
 ---
 
@@ -201,6 +208,10 @@ credentials and route approved actions through a **separate privileged executor*
 **metrics** (time-to-detect, time-to-contain, GPU-hours saved) derived from
 `decisions.jsonl`.
 
+**Reference (read first).** Patterns from the prior multi-agent project, adapted to
+our one-backend setup: [agent-patterns.md](agent-patterns.md) — policy in code,
+single-use arg-bound approval, runbook citation, structured trace, untrusted tool output.
+
 **You own:** `backend/app/defender.py`, `backend/app/k8s.py`, `backend/app/config.py`
 (credential wiring), a new `deploy/` RBAC manifest (read-only SA for the agent + a
 privileged SA for the executor), a new `backend/app/routes_defender.py` (+ one include
@@ -308,15 +319,14 @@ orphans are folded in (noted in each workstream's brief):
 | **Demo scripts** ×3 (§5) | **cross-cutting** — Opus 4.8 / narrative pass |
 | **NMC "when [situation]…" one-liner** (§1) | **cross-cutting** — with demo scripts |
 | **influxd :8086** (§5) | loose ops follow-up — **WS-A** can check in passing |
-| **Use-case-as-template** (§4) | *decision* — light version = config-driven runbook in WS-A; full version is scope-creep |
-| **Non-security scenario** (§1) | *decision* — DDoS already satisfies "more unique scenario"; a separate ops scenario (power cap) stays optional |
+| **Use-case-as-template** (§4) | → **§12 Future** (light version folds into WS-A) |
+| **Non-security scenario** (§1) | → **§12 Future** (DDoS covers the demo for now) |
 
 **Decided / dropped:** breach choice → **ShadowRay 2.0** (anchors mining + exfil +
-DDoS in one real case); 3D data-center view → dropped (2D floor view exists);
+DDoS in one real case); 3D data-center view → **deferred to §12 Future** (2D floor view covers the demo);
 self-hosted Nemotron, per-task models, connectors/KB → dropped.
 
-**Two genuine decisions still open:** (1) use-case-as-template — light or skip?
-(2) a separate non-security ops scenario — add or skip?
+**Parked to §12 Future:** use-case-as-template and a non-security ops scenario — both out of the critical path.
 
 ---
 
@@ -333,3 +343,22 @@ archaeology dig. One file per stream (own file = no merge collisions):
 Each logs **decisions** (what + why), a **changelog** (what changed, files, status),
 and whether the **shared contract** was honored. At integration, read all four top-to-
 bottom before merging.
+
+---
+
+## 12. Future (post-hackathon — parked, not cut)
+
+Revisit after the event; none of these block the demo:
+
+- **3D data-center view** — a 3D cluster/room visual of the box and its pods. The 2D
+  floor view covers the demo; the 3D version is polish for later.
+- **Non-security scenario (agents for ops incidents)** — the same agents handling a
+  *non-attack* incident: a GPU power/thermal cap (`nvidia-smi -pl`) or a failing /
+  straggler GPU. Shows the platform isn't security-only (NMC's "keep the world running"
+  framing). DDoS already covers the "unique scenario" ask for now.
+- **Use-case-as-template** — make the agent's incident-type / tools / policy / prompt a
+  reusable template so other incident agents reuse the frame (NMC²'s "enterprise level"
+  idea). Light version = a config-driven runbook in WS-A; this is the full version.
+- **Self-hosted Nemotron** on our own GPU (dropped from scope, sensible "production" story).
+- **Connectors / knowledge base** — runbooks + past incidents as retrieval (vs. the
+  hardcoded runbook we're shipping).
