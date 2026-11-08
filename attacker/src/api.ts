@@ -3,7 +3,7 @@
 
 export const API = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 
-export type StepId = "gain-access" | "start-miner" | "steal-weights" | "persistence";
+export type StepId = "gain-access" | "start-miner" | "steal-weights" | "persistence" | "ddos";
 export type StepStatus = "locked" | "ready" | "running" | "done";
 
 export interface AttackStep { id: StepId; label: string; description: string; status: StepStatus }
