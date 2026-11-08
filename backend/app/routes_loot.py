@@ -118,8 +118,10 @@ def _ddos_view() -> dict:
     total = _sink_total()
     status = store.attack["ddos"].status
     if _prev_ddos_status is None:
-        # Fresh process: don't show a stale flood from a previous backend run.
-        _ddos_baseline = 0 if status == "done" else total
+        # Fresh observation: ignore any flood the sink already counted before we started
+        # watching. The sink pod and its cumulative log survive both /reset and a backend
+        # restart, so a flood from an earlier session would otherwise show on first open.
+        _ddos_baseline = total
     elif status == "running" and _prev_ddos_status != "running":
         _ddos_baseline = total          # a new flood starts here
     elif status in ("ready", "locked") and _prev_ddos_status in ("done", "running"):

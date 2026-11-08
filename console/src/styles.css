@@ -306,7 +306,7 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
 }
 
 /* Measurable-outcome scoreboard (the "improving [outcome]" of the pitch). */
-.scoreboard { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0 20px 2px; }
+.scoreboard { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 20px 2px; }
 .score-tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); padding: 11px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .score-tile.hero { border-color: var(--accent); box-shadow: 0 0 0 1px var(--glow); }
 .score-val { font-family: var(--display); font-style: italic; font-weight: 800; font-size: 25px; line-height: 1.05; color: var(--text); }
