@@ -96,6 +96,12 @@ export interface TimelineEntry {
   tool?: string;
   /** Where it happened: a node name or a pod name. The 3D floor flashes it. */
   target?: string;
+  /** Which pipeline actor emitted this: "triage" | "investigator" | "advisor" | "executor".
+   *  Set by the backend; the AgentMap groups the timeline by it. */
+  agent?: string;
+  /** An agent's read-only lookup: shown in that agent's trace card, hidden from the
+   *  main incident timeline so the headline story stays high-signal. */
+  traceOnly?: boolean;
   // --- Expandable detail (agent actions carry the first four; attack events the last) ---
   /** Full tool-call arguments the agent used. */
   toolArgs?: Record<string, unknown>;

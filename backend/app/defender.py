@@ -20,8 +20,9 @@ READING MAP (sections in order, top to bottom):
   7. verify_readonly_identity  startup proof the agent SA cannot write (403).
   8. Approval + dispatch    run_tool_approved / _dispatch — the gate: needs-approval
                             actions become pending; autonomous ones run now.
-  9. Nemotron agent         _tool_schemas, SYSTEM_PROMPT, run_agent() — the model
-                            loop; code checks classify() before every call it makes.
+  9. Nemotron agents        _tool_schemas, the three role prompts, _run_role() and
+                            run_agent() — the Triage->Investigator->Advisor pipeline;
+                            code checks classify() before every call the Advisor makes.
  10. Detection              _detect / _check_exfil_evidence / detection_tick /
                             detection_loop — what fires the agent, every 4s.
  11. Metrics                metrics() — current-incident outcomes from the log.
@@ -54,7 +55,26 @@ from .k8s import (
 )
 from .models import Approval, IncidentRecord, RecordAction, now_iso
 
-AGENT = "Sentinel (Nemotron)"
+AGENT = "Sentinel (Nemotron)"  # umbrella name for incident bookkeeping (reportedBy, record_action)
+
+# THE TEAM (for a learner): "Sentinel" is not one agent — it's a pipeline of three
+# Nemotron agents that hand the incident down the line, plus a non-LLM write identity:
+#   triage       — first responder: classifies severity/phase, decides what to chase.
+#   investigator — forensics: reads logs/pods, maps which assets were hit (the scope).
+#   advisor      — containment lead: proposes + runs the ranked remediation (the only
+#                  stage with mutating tools, so the approve/executor gate lives here).
+#   executor     — NOT a model: the privileged identity that actually applies a fix the
+#                  Advisor got cleared (autonomously or after a human approves).
+# Each reasoning agent is a separate model call with its own prompt, tool subset and
+# model (Triage/Investigator run cheap+fast, Advisor runs the heavy model). Every
+# timeline entry carries which one emitted it, in the `agent` field.
+TRIAGE, INVESTIGATOR, ADVISOR, EXECUTOR = "triage", "investigator", "advisor", "executor"
+_AGENT_NAME = {
+    TRIAGE: "Triage (Nemotron)",
+    INVESTIGATOR: "Investigator (Nemotron)",
+    ADVISOR: "Advisor (Nemotron)",
+    EXECUTOR: "Executor",
+}
 
 # Pending actions awaiting human approval: approval_id -> (tool_name, args, rationale)
 pending_actions: dict[str, tuple[str, dict, str]] = {}
@@ -67,6 +87,11 @@ _nemotron_announced = False
 # run_agent before it dispatches that round's tool calls, so each resulting timeline
 # entry can carry the real model reasoning that led to it (Task 3).
 _round_reasoning: str = ""
+
+# Which pipeline agent is running right now, so _dispatch stamps its entries with the
+# right actor. Set by _run_role before each stage. Defaults to advisor (the only stage
+# that dispatches mutating tools, so a stray proposal is attributed sensibly).
+_current_agent: str = ADVISOR
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +469,7 @@ def run_tool_approved(tool: str, args: dict, approval_id: str, by: str) -> str:
     result = _RAW[tool](**args)
     store.add_timeline(
         kind="agent",
-        actor=AGENT,
+        actor=_AGENT_NAME[EXECUTOR],
         text=f"Executed approved action: {_summarize_call(tool, args)} — {result}",
         severity="high",
         autonomy={"mode": "needs-approval", "reason": "approved by " + by, "approvalId": approval_id},
@@ -453,6 +478,7 @@ def run_tool_approved(tool: str, args: dict, approval_id: str, by: str) -> str:
         tool_args=args,
         tool_result=result,
         pod_logs=pod_logs,
+        agent=EXECUTOR,
     )
     record_action(f"{_summarize_call(tool, args)} — {result} (approved by {by})")
     _log_decision({"tool": tool, "args": args, "mode": "needs-approval",
@@ -486,7 +512,7 @@ def _dispatch(tool: str, args: dict) -> str:
         pending_actions[approval.id] = (tool, args, reason)
         store.add_timeline(
             kind="agent",
-            actor=AGENT,
+            actor=_AGENT_NAME.get(_current_agent, AGENT),
             text=f"Requesting human approval to {_summarize_call(tool, args)} — {policy_reason}.",
             severity="high",
             autonomy={"mode": "needs-approval", "reason": policy_reason, "approvalId": approval.id},
@@ -494,6 +520,7 @@ def _dispatch(tool: str, args: dict) -> str:
             target=_TOOL_TARGET(args),
             tool_args=args,
             reasoning=_round_reasoning or None,
+            agent=_current_agent,  # the proposing agent (Advisor)
         )
         _log_decision({"tool": tool, "args": args, "mode": "needs-approval",
                        "decision": "pending", "approvalId": approval.id, "policyReason": policy_reason})
@@ -510,10 +537,28 @@ def _dispatch(tool: str, args: dict) -> str:
         result = f"error: {e.reason}"
     except Exception as e:  # noqa: BLE001
         result = f"error: {e}"
-    if tool not in READ_TOOLS:
+    if tool in READ_TOOLS:
+        # A look-only lookup: surface it in the agent's trace (traceOnly) so the
+        # investigation is visible, but keep it out of the main incident timeline.
         store.add_timeline(
             kind="agent",
-            actor=AGENT,
+            actor=_AGENT_NAME.get(_current_agent, AGENT),
+            text=f"Looked up {_summarize_call(tool, args)}",
+            severity="info",
+            tool=_summarize_call(tool, args),
+            target=_TOOL_TARGET(args),
+            tool_args=args,
+            tool_result=result,
+            reasoning=_round_reasoning or None,
+            agent=_current_agent,
+            trace_only=True,
+        )
+    else:
+        # A mutating tool that ran without approval: the Executor identity did the write.
+        is_write = tool not in RECORD_TOOLS
+        store.add_timeline(
+            kind="agent",
+            actor=_AGENT_NAME[EXECUTOR] if is_write else _AGENT_NAME.get(_current_agent, AGENT),
             text=f"{_summarize_call(tool, args)} — {result}",
             severity="medium",
             autonomy={"mode": "autonomous", "reason": reason},
@@ -523,6 +568,7 @@ def _dispatch(tool: str, args: dict) -> str:
             tool_result=result,
             reasoning=_round_reasoning or None,
             pod_logs=pod_logs,
+            agent=EXECUTOR if is_write else _current_agent,
         )
         record_action(f"{_summarize_call(tool, args)} — {result}")
     _log_decision({"tool": tool, "args": args, "mode": mode, "decision": "executed", "result": result})
@@ -588,26 +634,55 @@ def _tool_schemas() -> list[dict]:
     ]
 
 
-SYSTEM_PROMPT = (
-    "You are Sentinel, the autonomous defender for a law firm's GPU cluster, built on NVIDIA "
-    "Nemotron. An attacker has compromised workloads in the 'lawfirm' Kubernetes namespace using a "
-    "stolen service-account token. Your job: investigate with the read tools, then contain the "
-    "attacker, determine the exfiltration scope, and keep the incident record current.\n\n"
+# Shared context every agent gets up front: the scenario, so each prompt only has to
+# describe that agent's own job.
+_SCENARIO = (
+    "You defend a law firm's GPU cluster, built on NVIDIA Nemotron. An attacker has compromised "
+    "workloads in the 'lawfirm' Kubernetes namespace using a stolen service-account token. You are "
+    "one agent in a three-stage response team (Triage -> Investigator -> Advisor); do only your own "
+    "stage's job and hand off cleanly.\n\n"
+)
+
+# Tool subsets per stage. Triage and the Investigator only look + update our own paperwork;
+# ONLY the Advisor gets the mutating tools, so the approve/executor gate lives in one place.
+_TRIAGE_TOOLS = READ_TOOLS | {"update_incident_record"}
+_INVESTIGATOR_TOOLS = READ_TOOLS | {"update_scope"}
+_ADVISOR_TOOLS = set(_RAW)  # everything
+
+TRIAGE_PROMPT = _SCENARIO + (
+    "You are TRIAGE, the first responder. Size up the incident fast with the read tools, then set "
+    "the severity, phase and categories on the incident record (call update_incident_record). Do "
+    "NOT contain anything and do not touch scope — that is the Investigator's and Advisor's job. "
+    "Allowed phases include detection and containment; categories like 'unauthorized-access', "
+    "'cryptojacking', 'data-exfiltration', 'persistence'. Never lower severity below 'high' once an "
+    "unknown GPU pod is present. Finish with a 2-3 sentence handoff to the Investigator: what you "
+    "believe happened and exactly what to dig into. Be terse."
+)
+
+INVESTIGATOR_PROMPT = _SCENARIO + (
+    "You are the INVESTIGATOR (forensics). Using the read tools (describe_pod, get_pod_logs, "
+    "list_pods, gpu_status), determine the SCOPE: which of the assets model-weights, training, "
+    "notebook, node were touched, and whether there is evidence of exfiltration or persistence "
+    "(a CronJob). Record what you find with update_scope using exactly those asset ids and a status "
+    "of clean|investigating|exfiltrated|encrypted|contained. Do NOT contain anything — no deleting, "
+    "quarantining or revoking. Finish with a handoff to the Advisor: the confirmed scope, the likely "
+    "root cause, and the containment actions needed in priority order. Be terse."
+)
+
+ADVISOR_PROMPT = _SCENARIO + (
+    "You are the ADVISOR, the containment lead. Triage has classified the incident and the "
+    "Investigator has mapped the scope (both are in your context). Propose and execute the ranked "
+    "remediation now.\n\n"
     "AUTONOMY POLICY (the backend enforces this; respect it): you may act autonomously to delete "
-    "UNKNOWN pods (no owner label), quarantine pods, delete non-allowlisted cronjobs, and update "
-    "scope/record. Actions that touch legitimate work — revoke_service_account, cordon_node, or "
-    "deleting an OWNED pod — require human approval; request them when warranted but do not expect "
-    "them to run immediately. Never delete or disrupt pods owned by 'law-firm' or 'platform'.\n\n"
-    "Work in steps: inspect first, then contain the miner and any exfiltration/persistence, then "
-    "update the scope of affected assets and the incident record.\n\n"
+    "UNKNOWN pods (no owner label), quarantine pods, and delete non-allowlisted cronjobs. Actions "
+    "that touch legitimate work — revoke_service_account, cordon_node, or deleting an OWNED pod — "
+    "require human approval; request them when warranted but do not expect them to run immediately. "
+    "Never delete or disrupt pods owned by 'law-firm' or 'platform'.\n\n"
     "ROOT CAUSE: deleting the attacker's objects is not enough while the stolen token still works. "
-    "Once you have contained the attacker's pods, CALL revoke_service_account (it will be routed to "
-    "a human for approval; that is expected). Do not just list it as a next step. Set the notebook "
-    "asset to 'investigating' since it was the entry point.\n\n"
-    "Asset ids for update_scope are exactly: model-weights, training, notebook, node. "
-    "Never lower severity after confirmed exfiltration. Call update_incident_record to "
-    "advance the phase (detection->containment->eradication) and list next steps. Be decisive and "
-    "concise. When containment is done, stop calling tools and give a one-paragraph summary."
+    "Once you have contained the attacker's pods, CALL revoke_service_account (it routes to a human "
+    "for approval; that is expected). Do not just list it as a next step. Advance the phase with "
+    "update_incident_record (containment -> eradication) and list next steps. When containment is "
+    "done, stop calling tools and give a one-paragraph summary."
 )
 
 
@@ -621,17 +696,82 @@ def _client():
     return OpenAI(base_url=config.NVIDIA_BASE_URL, api_key=config.nvidia_api_key())
 
 
-def run_agent(trigger: str) -> None:
-    """Run the Nemotron "tool-calling" loop once, in response to a detection trigger.
+def _handoff(frm: str, to: str, summary: str) -> None:
+    """Log one agent passing the incident to the next — the visible 'agents talk to each
+    other' moment. The short text is the edge; the full summary rides in `reasoning` so the
+    console can expand it under the handing-off agent."""
+    store.add_timeline(
+        kind="agent", actor=_AGENT_NAME[frm], agent=frm, severity="info",
+        text=f"Handing off to {_AGENT_NAME[to].split(' ')[0]}.",
+        reasoning=summary or None,
+    )
 
-    How an agent loop works (for a learner): we hand the model (a) a system prompt with
-    its role + the autonomy policy, (b) a list of tools it may call (list_pods, delete_pod,
-    …), and (c) the trigger text. The model replies either with plain text or with a
-    request to call a tool. For each tool it requests, OUR code runs classify() first, then
-    either executes it, or creates an approval and tells the model to wait. We feed the
-    result back and let it reason again, up to a round cap. The model never touches the
-    cluster directly — it only asks, and this function decides. Blocking by design.
-    """
+
+def _run_role(oai, *, role: str, model: str, system_prompt: str,
+              allowed: set[str], context: str, rounds: int = 6) -> str:
+    """Run ONE agent as a Nemotron tool-loop to completion and return its final text (the
+    handoff to the next stage). Same loop mechanics for all three; the role differs only in
+    its prompt, which tools it may call, and which model runs it.
+
+    The loop: hand the model its prompt + context + allowed tools; each round it either
+    gives final text (done) or asks for tool calls, which _dispatch runs under the policy
+    gate before we feed results back. Blocking by design."""
+    global _current_agent, _round_reasoning
+    _current_agent = role
+    name = _AGENT_NAME[role]
+    tools = [t for t in _tool_schemas() if t["function"]["name"] in allowed]
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": context},
+    ]
+    final = ""
+    for _round in range(rounds):
+        try:
+            resp = oai.chat.completions.create(
+                model=model, messages=messages, tools=tools,
+                temperature=0.2, max_tokens=4096,  # reasoning models spend part of this on thinking
+            )
+        except Exception as e:  # noqa: BLE001
+            store.add_timeline(kind="system", actor="System",
+                               text=f"{name} call failed: {e}", severity="medium")
+            break
+        msg = resp.choices[0].message
+        tool_calls = msg.tool_calls or []
+        # Carry this round's real model reasoning onto the actions it triggers. Some Nemotron
+        # deployments surface it as reasoning_content rather than content.
+        _round_reasoning = (msg.content or "").strip() or (getattr(msg, "reasoning_content", "") or "").strip()
+        messages.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in tool_calls
+            ] or None,
+        })
+        if msg.content and not tool_calls:
+            final = msg.content.strip()
+            store.add_timeline(kind="agent", actor=name, agent=role, text=final, severity="info")
+            break
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            result = _dispatch(tc.function.name, args)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result[:2000]})
+    else:
+        store.add_timeline(kind="agent", actor=name, agent=role,
+                           text=f"{name} reached its step limit.", severity="info")
+    _round_reasoning = ""
+    return final
+
+
+def run_agent(trigger: str) -> None:
+    """Drive the three-agent pipeline once, in response to a detection trigger:
+    Triage classifies -> Investigator maps scope -> Advisor contains. Each stage's output
+    is logged AND threaded into the next stage's context (the handoff). The Advisor is the
+    only stage with mutating tools, so the policy gate + approvals are unchanged."""
     if not nemotron_configured():
         global _nemotron_announced
         if not _nemotron_announced:
@@ -652,60 +792,34 @@ def run_agent(trigger: str) -> None:
                            text=f"Nemotron client error: {e}", severity="medium")
         return
 
-    ctx = (
+    base = (
         f"Detection trigger: {trigger}\n\n"
         f"Current lawfirm pods:\n{_do_list_pods()}\n\n"
-        f"GPU: {_do_gpu_status()}\n\n"
-        "Investigate and contain. Remember the autonomy policy."
+        f"GPU: {_do_gpu_status()}\n"
     )
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": ctx},
-    ]
-    tools = _tool_schemas()
 
-    for _round in range(8):
-        try:
-            resp = oai.chat.completions.create(
-                model=config.NEMOTRON_MODEL,
-                messages=messages,
-                tools=tools,
-                temperature=0.2,
-                max_tokens=4096,   # reasoning models spend part of this on thinking
-            )
-        except Exception as e:  # noqa: BLE001
-            store.add_timeline(kind="system", actor="System",
-                               text=f"Nemotron call failed: {e}", severity="medium")
-            return
-        msg = resp.choices[0].message
-        tool_calls = msg.tool_calls or []
-        # Carry this round's real model reasoning onto the actions it triggers (Task 3).
-        # Some Nemotron deployments surface it as reasoning_content rather than content.
-        global _round_reasoning
-        _round_reasoning = (msg.content or "").strip() or (getattr(msg, "reasoning_content", "") or "").strip()
-        messages.append(
-            {
-                "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [
-                    {"id": tc.id, "type": "function",
-                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                    for tc in tool_calls
-                ] or None,
-            }
-        )
-        if msg.content and not tool_calls:
-            store.add_timeline(kind="agent", actor=AGENT, text=msg.content.strip(), severity="info")
-            return
-        for tc in tool_calls:
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            result = _dispatch(tc.function.name, args)
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result[:2000]})
-    store.add_timeline(kind="agent", actor=AGENT,
-                       text="Containment loop reached its step limit; see actions above.", severity="info")
+    # 1) Triage — fast model, classify only.
+    triage = _run_role(
+        oai, role=TRIAGE, model=config.NEMOTRON_FAST_MODEL, system_prompt=TRIAGE_PROMPT,
+        allowed=_TRIAGE_TOOLS, context=base + "\nClassify this incident, then hand off to the Investigator.",
+    )
+    _handoff(TRIAGE, INVESTIGATOR, triage)
+
+    # 2) Investigator — fast model, scope only.
+    inv = _run_role(
+        oai, role=INVESTIGATOR, model=config.NEMOTRON_FAST_MODEL, system_prompt=INVESTIGATOR_PROMPT,
+        allowed=_INVESTIGATOR_TOOLS,
+        context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\nDetermine the scope, then hand off to the Advisor.",
+    )
+    _handoff(INVESTIGATOR, ADVISOR, inv)
+
+    # 3) Advisor — heavy model, the only stage that contains.
+    _run_role(
+        oai, role=ADVISOR, model=config.NEMOTRON_MODEL, system_prompt=ADVISOR_PROMPT,
+        allowed=_ADVISOR_TOOLS, rounds=8,
+        context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\n"
+        f"Investigator findings:\n{inv or '(none)'}\n\nPropose and execute the ranked remediation now.",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ export function ScopeBoard() {
   for (const a of assets) tally.set(a.status, (tally.get(a.status) ?? 0) + 1);
 
   return (
-    <section className="panel area-scope" aria-labelledby="scope-h">
+    <section className="panel" aria-labelledby="scope-h">
       <div className="panel-head">
         <h2 id="scope-h">Scope</h2>
         {assets.length > 0 && (
@@ -42,20 +42,22 @@ export function ScopeBoard() {
         <ul className="assets">
           {assets.map((a) => (
             <li key={a.id} className={`asset t-${ASSET_STATUS[a.status].tone}`}>
-              <div className="row">
-                <span className="name">{a.name}</span>
-                <AssetChip status={a.status} />
-              </div>
-              <span className="desc">
-                {a.description} <span className="ref mono">{a.ref}</span>
-              </span>
-              {a.note ? (
-                <span className="note">
-                  {a.note} ({ago(a.statusSince, now)})
+              <details open={a.status === "exfiltrated"}>
+                <summary className="row">
+                  <span className="name">{a.name}</span>
+                  <AssetChip status={a.status} />
+                </summary>
+                <span className="desc">
+                  {a.description} <span className="ref mono">{a.ref}</span>
                 </span>
-              ) : (
-                <span className="ref">Since {ago(a.statusSince, now)}</span>
-              )}
+                {a.note ? (
+                  <span className="note">
+                    {a.note} ({ago(a.statusSince, now)})
+                  </span>
+                ) : (
+                  <span className="ref">Since {ago(a.statusSince, now)}</span>
+                )}
+              </details>
             </li>
           ))}
         </ul>

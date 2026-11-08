@@ -34,7 +34,7 @@ export function IncidentRecord() {
   const canEdit = canEditRecord(user?.role);
 
   return (
-    <section className="panel area-record" aria-labelledby="rec-h">
+    <section className="panel" aria-labelledby="rec-h">
       <div className="panel-head">
         <h2 id="rec-h">Incident record</h2>
         <div className="panel-tools">

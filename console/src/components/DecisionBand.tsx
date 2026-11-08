@@ -9,13 +9,15 @@ import { useNow } from "../hooks";
 import { canAct, RISK } from "../labels";
 import { Link } from "../router";
 import type { Approval } from "../types";
+import { PhaseTrack } from "./TopBar";
 
-function ApprovalCard({ a }: { a: Approval }) {
+function ApprovalCard({ a, first }: { a: Approval; first: boolean }) {
   const { apply } = useLive();
   const { user } = useSession();
   const now = useNow();
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(first);
   const allowed = canAct(user?.role);
   const risk = a.risk ? RISK[a.risk] : null;
 
@@ -33,26 +35,14 @@ function ApprovalCard({ a }: { a: Approval }) {
   };
 
   return (
-    <article className="approval" aria-label={`Approval needed: ${a.action}`}>
-      <div className="approval-head">
-        {typeof a.rank === "number" && <span className="rank" title="Ranked remediation step">#{a.rank}</span>}
-        <h3>{a.action}</h3>
-      </div>
-      <p className="why">{a.rationale}</p>
-      <p className="policy">Needs a human: {a.policyReason}</p>
-      <p className="meta">
-        If approved: {a.impact} Asked by {a.requestedBy}, {ago(a.requestedAt, now)}.
-      </p>
-      {(a.runbookRef || risk || a.reversible !== undefined) && (
-        <p className="plan-tags">
-          {a.runbookRef && <span className="tag mono" title="Runbook step">{a.runbookRef}</span>}
-          {risk && <span className={`chip t-${risk.tone}`}>Risk: {risk.label}</span>}
-          {a.reversible !== undefined && (
-            <span className="tag">{a.reversible ? "Reversible" : "Not reversible"}</span>
-          )}
-          {a.target && <span className="tag mono">{a.target}</span>}
-        </p>
-      )}
+    <li className={`approval${open ? " open" : ""}`} aria-label={`Approval needed: ${a.action}`}>
+      <button className="approval-row" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {typeof a.rank === "number" && <span className="rank" title="Ranked remediation step">{a.rank}</span>}
+        <span className="approval-action mono">{a.action}</span>
+        {risk && <span className={`chip t-${risk.tone}`}>{risk.label} risk</span>}
+        <span className="approval-ago">{ago(a.requestedAt, now)}</span>
+        <span className="chev" aria-hidden />
+      </button>
       <div className="actions">
         {allowed ? (
           <>
@@ -64,15 +54,25 @@ function ApprovalCard({ a }: { a: Approval }) {
             </button>
           </>
         ) : (
-          <span className="readonly">
-            {user?.role === "operator"
-              ? "Operators can post updates but not approve. Ask an approver."
-              : "Viewers can't decide. Ask an approver."}
-          </span>
+          <span className="readonly">{user?.role === "operator" ? "Operators can't approve" : "Read only"}</span>
         )}
       </div>
+      {open && (
+        <dl className="approval-detail">
+          <dt>Why</dt><dd>{a.rationale}</dd>
+          <dt>Needs a human</dt><dd>{a.policyReason}</dd>
+          <dt>If approved</dt><dd>{a.impact}</dd>
+          <dt>Asked by</dt>
+          <dd>
+            {a.requestedBy}
+            {a.runbookRef && <> · <span className="mono">{a.runbookRef}</span></>}
+            {a.reversible !== undefined && <> · {a.reversible ? "reversible" : "not reversible"}</>}
+            {a.target && <> · <span className="mono">{a.target}</span></>}
+          </dd>
+        </dl>
+      )}
       {err && <p className="err" role="alert">{err}</p>}
-    </article>
+    </li>
   );
 }
 
@@ -106,20 +106,20 @@ export function DecisionBand() {
     return (
       <section className="band band-hazard" aria-live="assertive">
         <div className="band-head">
+          <span className="band-pulse" aria-hidden />
           <span className="band-title">
-            {ranked ? "Ranked remediation plan" : pending.length === 1 ? "1 action is waiting for your decision" : `${pending.length} actions are waiting for your decision`}
+            {pending.length === 1 ? "1 decision needs you" : `${pending.length} decisions need you`}
           </span>
           <span className="band-sub">
-            {ranked
-              ? "Ordered by the agent's runbook: lower rank first. Approve, deny, or adjust the plan."
-              : "Agents have already done what they could on their own."}
+            {ranked ? "Ranked by the runbook, do #1 first. Click a step for the reasoning." : "Agents already did what they could alone."}
           </span>
+          {snapshot.record && <PhaseTrack phase={snapshot.record.phase} />}
         </div>
-        <div className="approvals">
-          {ordered.map((a) => (
-            <ApprovalCard key={a.id} a={a} />
+        <ol className="approvals">
+          {ordered.map((a, i) => (
+            <ApprovalCard key={a.id} a={a} first={i === 0} />
           ))}
-        </div>
+        </ol>
       </section>
     );
   }
@@ -143,8 +143,10 @@ export function DecisionBand() {
 
   return (
     <section className={`band band-calm ${stale ? "t-invest" : tone}`} aria-live="polite">
+      <span className="band-dot" aria-hidden />
       <span className="band-title">{stale ? "Connection lost. Showing the last known state." : title}</span>
       <span className="band-sub">{stale ? <>Reconnecting to <code>{API_URL}</code>…</> : sub}</span>
+      {r && <PhaseTrack phase={r.phase} />}
     </section>
   );
 }

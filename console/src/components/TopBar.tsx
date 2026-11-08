@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLive, useSession } from "../context";
 import { incidentStatus, PHASES } from "../labels";
+import type { IncidentPhase } from "../types";
 import { Link } from "../router";
 import { applyTheme, loadTheme, type ThemePref } from "../theme";
 
@@ -12,19 +13,34 @@ const CONN = {
 
 const NEXT_THEME: Record<ThemePref, ThemePref> = { system: "dark", dark: "light", light: "system" };
 const THEME_LABEL: Record<ThemePref, string> = { system: "Theme: system", dark: "Theme: dark", light: "Theme: light" };
+const THEME_ICON: Record<ThemePref, string> = { system: "◐", dark: "☾", light: "☀" };
+
+/** NIST SP 800-61 phase track; shown in the status band. */
+export function PhaseTrack({ phase }: { phase: IncidentPhase }) {
+  const idx = PHASES.findIndex((p) => p.id === phase);
+  return (
+    <ol className="phases" aria-label="Incident phase">
+      {PHASES.map((p, i) => (
+        <li key={p.id} className={i < idx ? "done" : i === idx ? "now" : ""} aria-current={i === idx ? "step" : undefined}>
+          {p.label}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export function TopBar() {
   const { connection, snapshot } = useLive();
   const { user, signOut } = useSession();
   const [theme, setTheme] = useState<ThemePref>(loadTheme);
   const record = snapshot?.record ?? null;
-  const phaseIdx = record ? PHASES.findIndex((p) => p.id === record.phase) : -1;
   const c = CONN[connection];
 
   return (
     <header className="topbar">
       <div className="brand">
-        <strong>NMC operator console</strong>
+        <img src="/mascots/logo.png" alt="" />
+        <strong>NMC <em>// zero day</em></strong>
         <span>
           {snapshot
             ? `Client: ${snapshot.firm} · Cluster ${snapshot.cluster.name}`
@@ -38,33 +54,26 @@ export function TopBar() {
         {user?.role === "admin" && <Link href="/users">Users</Link>}
         <Link href="/attack">Attack panel</Link>
       </nav>
-      {record && (
-        <ol className="phases" aria-label="Incident phase">
-          {PHASES.map((p, i) => (
-            <li key={p.id} className={i < phaseIdx ? "done" : i === phaseIdx ? "now" : ""} aria-current={i === phaseIdx ? "step" : undefined}>
-              {p.label}
-            </li>
-          ))}
-        </ol>
-      )}
       <div className="topbar-right">
         {record && (
           <span className={`chip t-${incidentStatus(record.status).tone}`}>{incidentStatus(record.status).label}</span>
         )}
         <span className={`conn t-${c.tone}`} role="status">{c.label}</span>
         <button
-          className="btn btn-ghost"
+          className="btn btn-ghost btn-icon"
+          title={THEME_LABEL[theme]}
+          aria-label={THEME_LABEL[theme]}
           onClick={() => {
             const n = NEXT_THEME[theme];
             setTheme(n);
             applyTheme(n);
           }}
         >
-          {THEME_LABEL[theme]}
+          {THEME_ICON[theme]}
         </button>
         {user && (
           <span className="whoami">
-            <strong>{user.name}</strong> ({user.role})
+            <strong>{user.name}</strong> {user.role}
           </span>
         )}
         <button className="btn" onClick={signOut}>Sign out</button>

@@ -87,7 +87,7 @@ export function ClusterView({ initialView = "2d" }: { initialView?: "2d" | "3d" 
   const close = useCallback(() => setSel(null), []);
 
   return (
-    <section className="panel area-cluster" aria-labelledby="cl-h" style={view === "3d" ? { minHeight: 420 } : undefined}>
+    <section className="panel" aria-labelledby="cl-h" style={view === "3d" ? { minHeight: 420 } : undefined}>
       <div className="panel-head">
         <h2 id="cl-h">Cluster</h2>
         <div className="view-toggle" role="group" aria-label="Cluster view">

@@ -161,6 +161,8 @@ class Store:
         reasoning: str | None = None,
         pod_logs: str | None = None,
         transcript: list[dict] | None = None,
+        agent: str | None = None,
+        trace_only: bool = False,
     ) -> TimelineEntry:
         entry = TimelineEntry(
             id=f"tl-{uuid.uuid4().hex[:10]}",
@@ -172,6 +174,8 @@ class Store:
             autonomy=autonomy,
             tool=tool,
             target=target,
+            agent=agent,
+            traceOnly=trace_only or None,
             toolArgs=tool_args,
             toolResult=tool_result,
             reasoning=reasoning,

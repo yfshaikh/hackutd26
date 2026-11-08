@@ -1,7 +1,39 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "attacker", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "attacker", "run", "dev"], "port": 5180 },
-    { "name": "console", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "console", "run", "dev"], "port": 5173 }
+    {
+      "name": "attacker",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "attacker",
+        "run",
+        "dev"
+      ],
+      "port": 5180
+    },
+    {
+      "name": "console",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "console",
+        "run",
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "scratch",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5190",
+        "--bind",
+        "127.0.0.1"
+      ],
+      "port": 5190
+    }
   ]
 }

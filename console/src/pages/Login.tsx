@@ -27,6 +27,7 @@ export function Login() {
   return (
     <div className="login">
       <form className="login-card form" onSubmit={submit}>
+        <img className="login-art" src="/mascots/crew.png" alt="" />
         <div>
           <h1>Sign in to the operator console</h1>
           <p className="lede">

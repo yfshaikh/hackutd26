@@ -72,8 +72,10 @@ REST (approve, deny, messages, users, attack, reset) ◄── api.ts ◄── 
 | `src/main.tsx` | Entry: fonts, theme, mount |
 | `src/App.tsx` | Routes and sign-in gate; lazy-loads the floor page |
 | `src/components/TopBar.tsx` | Firm, nav, NIST phase track, incident status, connection, theme, user |
-| `src/components/DecisionBand.tsx` | "What do I do now": yellow ranked-plan band when decisions wait, otherwise status and next step |
-| `src/components/Timeline.tsx` | Unified feed (attacks, agents, people), autonomy reason chips, filters, message box |
+| `src/agents.ts` | The six actors (attacker, cluster, detector, Sentinel, responders, executor), their mascots, and which one each timeline entry belongs to |
+| `src/components/AgentMap.tsx` | Node map of the actors with live state; click a node to filter the timeline |
+| `src/components/DecisionBand.tsx` | "What do I do now": compact amber list of ranked decisions (click for reasoning), otherwise a one-line status plus the NIST phase track |
+| `src/components/Timeline.tsx` | Unified feed, one line per event with the actor's mascot; click a row for tool call, autonomy reason and full detail |
 | `src/components/ScopeBoard.tsx` | Per-asset status, worst first, with tally |
 | `src/components/IncidentRecord.tsx` | Full NIST SP 800-61 record, live breach clocks, PDF export, edit toggle |
 | `src/components/RecordEditor.tsx` | Human editor for the NIST fields and breach deadlines |
@@ -106,7 +108,9 @@ To use WebSockets instead of SSE, change only `subscribe()` in `src/api.ts`; it 
 
 ## Design notes
 
-- Signal-room palette: cool navy (dark) or cool grey (light). Hazard yellow appears **only** when a human decision is waiting.
+- Styled after HackUTD 2026 Zero Day: near-black night city, electric purple `#7828FF`, lavender, notched buttons, italic Chakra Petch headings. Amber appears **only** when a human decision is waiting.
+- Mascot art in `public/mascots/` is HackUTD's (cropped from zeroday.hackutd.co) and is used for the HackUTD demo only.
+- Main page: decisions on top, agent map, then the timeline beside a tabbed Scope / Cluster / Record / Chat column.
 - Status is always colour + glyph + word (▲ exfiltrated, ■ encrypted, ◐ investigating, ◆ contained, ● clean).
-- Type: Atkinson Hyperlegible Next (built for legibility) for UI; IBM Plex Mono only for Kubernetes names and tool calls.
+- Type: Chakra Petch for headings, Atkinson Hyperlegible Next (built for legibility) for UI; IBM Plex Mono only for Kubernetes names and tool calls.
 - `prefers-reduced-motion` disables CSS transitions and the 3D pulse/flash animation.

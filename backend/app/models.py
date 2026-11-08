@@ -102,6 +102,14 @@ class TimelineEntry(BaseModel):
     autonomy: Optional[Autonomy] = None
     tool: Optional[str] = None
     target: Optional[str] = None
+    # Which actor in the pipeline emitted this: one of the three reasoning agents
+    # (triage|investigator|advisor) or the write identity (executor). The console
+    # groups the timeline by this instead of guessing from kind/actor/tool.
+    agent: Optional[str] = None
+    # True for an agent's read-only lookup (list_pods, get_pod_logs, …): it shows in
+    # that agent's trace so the investigation is visible, but is kept OUT of the main
+    # incident timeline so the headline story stays high-signal.
+    traceOnly: Optional[bool] = None
     # --- Task 3: expandable detail -----------------------------------------
     # On agent actions: the full tool call and result, plus Nemotron's reasoning
     # for that round, and relevant pod logs. On attack events: the attacker

@@ -39,6 +39,13 @@ NEMOTRON_MODEL = os.environ.get(
     "NEMOTRON_MODEL",
     "nvidia/nemotron-3-ultra-550b-a55b" if USE_OPENROUTER else "nvidia/llama-3.3-nemotron-super-49b-v1.5",
 )
+# Per-task model for the cheap, fast agents (Triage, Investigator). The heavy
+# Advisor keeps NEMOTRON_MODEL (Ultra-550B on OpenRouter). Without OpenRouter both
+# default to Super-49B, so the split is a no-op until an Ultra id is configured.
+# ponytail: two models is the whole "per-task model" story; add a third tier when one pays off.
+NEMOTRON_FAST_MODEL = os.environ.get(
+    "NEMOTRON_FAST_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+)
 
 FIRM_NAME = "Halloran & Vance LLP"
 

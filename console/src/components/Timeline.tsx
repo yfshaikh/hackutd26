@@ -1,11 +1,10 @@
-import { useState, type FormEvent } from "react";
-import { errorText, sendMessage } from "../api";
-import { useLive, useSession } from "../context";
+import { useState } from "react";
+import { AGENT_BY_ID, agentOf, initials, type AgentId } from "../agents";
+import { useLive } from "../context";
 import { clock } from "../format";
-import { canChat } from "../labels";
-import type { TimelineEntry, TimelineKind } from "../types";
+import { SEVERITY } from "../labels";
+import type { TimelineEntry } from "../types";
 import { NoData } from "./Empty";
-import { SeverityChip } from "./Status";
 
 /** Transcript-line colouring mirrors the attacker terminal: note=why, http=call, etc. */
 const TX_LABEL: Record<string, string> = {
@@ -64,129 +63,66 @@ function Detail({ e }: { e: TimelineEntry }) {
   );
 }
 
-const FILTERS: { id: "all" | TimelineKind; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "attack", label: "Attacks" },
-  { id: "agent", label: "Agents" },
-  { id: "human", label: "People" },
-];
-
 function Entry({ e }: { e: TimelineEntry }) {
   const a = e.autonomy;
   const [open, setOpen] = useState(false);
-  const detail = hasDetail(e);
-  const txCount = e.transcript?.length ?? 0;
+  const agent = AGENT_BY_ID[agentOf(e)];
+  const sev = e.severity && e.severity !== "info" ? SEVERITY[e.severity] : null;
   return (
-    <li className={`entry k-${e.kind}`}>
-      <time dateTime={e.ts}>{clock(e.ts)}</time>
-      <div>
-        <div className="who">
-          {e.actor}
-          {e.severity && e.severity !== "info" && <SeverityChip severity={e.severity} />}
+    <li className={`entry k-${e.kind}${open ? " open" : ""}`}>
+      <button className="entry-row" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <time dateTime={e.ts}>{clock(e.ts)}</time>
+        <span className={`entry-avatar t-${agent.tone}`} aria-hidden>
+          {agent.img ? <img src={agent.img} alt="" /> : initials(e.actor)}
+        </span>
+        <span className="entry-main">
+          <span className="who">{agent.id === "executor" ? "Executor" : e.actor}</span>
+          <span className="text">{e.text}</span>
+        </span>
+        {a?.mode === "needs-approval" && agent.id !== "executor" && <span className="chip mode-ask">Asked approval</span>}
+        {sev && <span className={`sev-dot t-${sev.tone}`} title={`${sev.label} severity`}><span className="sr-only">{sev.label}</span></span>}
+        <span className="chev" aria-hidden />
+      </button>
+      {open && (
+        <div className="entry-body">
+          <p className="text-full">{e.text}</p>
+          {e.tool && <code className="tool">{e.tool}</code>}
+          {a && (
+            <p className="policy">
+              <span className={`chip ${a.mode === "autonomous" ? "mode-auto" : "mode-ask"}`}>
+                {a.mode === "autonomous" ? "Ran on its own" : "Needed approval"}
+              </span>
+              <span className="why">{a.reason}</span>
+            </p>
+          )}
+          {hasDetail(e) && <Detail e={e} />}
         </div>
-        <p className="text">{e.text}</p>
-        {e.tool && <code className="tool">{e.tool}</code>}
-        {a && (
-          <p className="policy">
-            {a.mode === "autonomous" ? (
-              <span className="chip mode-auto">Autonomous</span>
-            ) : (
-              <span className="chip mode-ask">Needs approval</span>
-            )}
-            <span className="why">{a.reason}</span>
-          </p>
-        )}
-        {detail && (
-          <button
-            className="detail-toggle"
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open ? "Hide detail" : e.kind === "attack" && txCount
-              ? `Show what the attacker did (${txCount})`
-              : "Show detail"}
-          </button>
-        )}
-        {detail && open && <Detail e={e} />}
-      </div>
+      )}
     </li>
   );
 }
 
-function Composer() {
-  const { apply, connection } = useLive();
-  const { user } = useSession();
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  if (!canChat(user?.role)) return <p className="hint">Viewers and approvers can read the timeline but can't post.</p>;
-  if (connection !== "live") return <p className="hint">Messages can be sent once the command center is back.</p>;
-
-  const submit = async (ev: FormEvent) => {
-    ev.preventDefault();
-    const t = text.trim();
-    if (!t) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const entry = await sendMessage(t);
-      apply({ type: "timeline", entry });
-      setText("");
-    } catch (e) {
-      setErr(`Message not sent: ${errorText(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <form onSubmit={submit}>
-      {err && <p className="hint" role="alert" style={{ color: "var(--exfil)", fontWeight: 700 }}>{err}</p>}
-      <div className="composer">
-        <label className="sr-only" htmlFor="msg">Message to the team</label>
-        <input
-          id="msg"
-          className="input"
-          placeholder="Message the team and agents"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          maxLength={1000}
-          autoComplete="off"
-        />
-        <button className="btn btn-primary" disabled={busy || !text.trim()}>
-          {busy ? "Sending…" : "Send"}
-        </button>
-      </div>
-    </form>
-  );
-}
-
-export function Timeline() {
+export function Timeline({ agent, onClear }: { agent: AgentId | null; onClear: () => void }) {
   const { snapshot, connection } = useLive();
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
   const entries = (snapshot?.timeline ?? [])
-    .filter((e) => filter === "all" || e.kind === filter)
+    .filter((e) => !e.traceOnly) // read-only lookups live in the agent's trace, not the main story
+    .filter((e) => !agent || agentOf(e) === agent)
     .slice()
     .sort((a, b) => b.ts.localeCompare(a.ts));
 
   return (
-    <section className="panel timeline-panel area-timeline" aria-labelledby="tl-h">
+    <section className="panel timeline-panel" aria-labelledby="tl-h">
       <div className="panel-head">
         <h2 id="tl-h">Live timeline</h2>
-        <div className="filters" role="group" aria-label="Filter timeline">
-          {FILTERS.map((f) => (
-            <button key={f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
-              {f.label}
-            </button>
-          ))}
-        </div>
+        <span className="aside">
+          {agent ? <>Only {AGENT_BY_ID[agent].name} · <button className="link-btn" onClick={onClear}>show all</button></> : "Newest first · click a row for detail"}
+        </span>
       </div>
       {!snapshot ? (
         <NoData connection={connection} what="The timeline" />
       ) : entries.length === 0 ? (
         <div className="empty">
-          <strong>{filter === "all" ? "Nothing has happened yet" : "No entries of this kind"}</strong>
+          <strong>{agent ? `Nothing from ${AGENT_BY_ID[agent].name} yet` : "Nothing has happened yet"}</strong>
           <span>Attack events, agent actions and team messages appear here, newest first.</span>
         </div>
       ) : (
@@ -196,7 +132,6 @@ export function Timeline() {
           ))}
         </ol>
       )}
-      {snapshot && <Composer />}
     </section>
   );
 }
