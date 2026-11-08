@@ -14,8 +14,7 @@ const PLAYBOOK: Record<StepId, string> = {
   "ddos": "Turn the foothold into a bounded in-cluster connection flood.",
 };
 const PAYLOADS: StepId[] = ["start-miner", "steal-weights", "persistence", "ddos"];
-const PACE_MS = 150;  // delay between revealed log lines (readable)
-const CATCHUP = 10;   // reveal faster when more than this many are queued, so it never lags
+const PACE_MS = 140;  // delay between auto-revealed BOOT lines (attack lines are manual, via Next)
 
 const isURL = (s: string) => /^https?:\/\//.test(s) || /^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(s);
 function linkify(text: string): ReactNode[] {
@@ -62,7 +61,7 @@ const bootLines = (target?: string) => [
   { kind: "cmd", text: "./zeroday --target lawfirm" },
 ];
 
-export default function Terminal({ booted }: { booted: boolean }) {
+export default function Terminal({ booted, onClose }: { booted: boolean; onClose: () => void }) {
   const [steps, setSteps] = useState<AttackStep[] | null>(null);
   const [recon, setRecon] = useState<Recon | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -104,16 +103,21 @@ export default function Terminal({ booted }: { booted: boolean }) {
     return list;
   }, [entries, chosen, recon?.target]);
 
-  // Reveal one line at a time (fast catch-up for big bursts) once the screen has booted.
+  // The boot intro auto-plays; attack lines wait for the Next button so the operator can
+  // read each one. Reset the reveal when the focus step changes or the lid closes.
+  const BOOT_LEN = chosen ? 0 : bootLines().length;
   useEffect(() => { setReveal(0); }, [focusStep]);
+  useEffect(() => { if (!booted) setReveal(0); }, [booted]);
   useEffect(() => {
-    if (!booted || reveal >= items.length) return;
-    const gap = items.length - reveal > CATCHUP ? 40 : PACE_MS;
-    const t = setTimeout(() => setReveal((c) => c + 1), gap);
+    if (!booted || reveal >= BOOT_LEN) return;
+    const t = setTimeout(() => setReveal((c) => c + 1), PACE_MS);
     return () => clearTimeout(t);
-  }, [booted, reveal, items.length]);
+  }, [booted, reveal, BOOT_LEN]);
   const visible = items.slice(0, reveal);
-  const settled = reveal >= items.length && items.length > 0;
+  const pending = items.length - reveal;                      // unrevealed lines
+  const stepping = booted && reveal >= BOOT_LEN && pending > 0; // past the intro, lines to step
+  const settled = pending <= 0 && items.length > 0;
+  const advance = () => setReveal((c) => Math.min(items.length, c + 1));
 
   useEffect(() => { if (follow.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [visible.length]);
 
@@ -133,7 +137,7 @@ export default function Terminal({ booted }: { booted: boolean }) {
     setBusy("reset"); setErr(null); setChosen(null);
     try { const r = await resetAll(); setSteps(r.attack); setEntries([]); }
     catch (e) { setErr(`Reset failed: ${(e as Error).message}`); }
-    finally { setBusy(null); refresh(); }
+    finally { setBusy(null); refresh(); onClose(); }  // reset also closes the laptop
   }
 
   const stepLabel = chosen
@@ -177,34 +181,42 @@ export default function Terminal({ booted }: { booted: boolean }) {
 
       {connected && booted && (
         <div className="actions">
-          {!access ? (
-            (settled || busy) && (
+          {stepping ? (
+            <button className="act next-btn" onClick={advance}>Next&nbsp;▸{pending > 1 ? ` · ${pending} more` : ""}</button>
+          ) : !access ? (
+            busy ? (
+              <span className="act-head">exploiting…</span>
+            ) : (
               <>
                 <span className="act-head">step 0 — break in</span>
-                <button className="act danger" disabled={gain?.status !== "ready" || !!busy} onClick={() => act("gain-access")} title={PLAYBOOK["gain-access"]}>
-                  {busy === "gain-access" || gain?.status === "running" ? "exploiting…" : "Gain access"}
-                </button>
+                <button className="act danger" disabled={gain?.status !== "ready"} onClick={() => act("gain-access")} title={PLAYBOOK["gain-access"]}>Gain access</button>
               </>
             )
-          ) : !chosen && settled ? (
+          ) : !chosen ? (
+            settled ? (
+              <>
+                <span className="act-head ok">access ✓ — choose one attack</span>
+                {PAYLOADS.map((id) => {
+                  const s = (steps ?? []).find((x) => x.id === id);
+                  return (
+                    <button key={id} className={"act" + (s?.status === "done" ? " done" : "")} disabled={!!busy} onClick={() => act(id)} title={PLAYBOOK[id]}>
+                      {s?.label ?? id}
+                    </button>
+                  );
+                })}
+                <button className="act ghost" disabled={!!busy} onClick={reset}>⟲ reset</button>
+              </>
+            ) : (
+              <span className="act-head ok">access ✓ — waiting for next line…</span>
+            )
+          ) : runningChosen ? (
+            <span className="act-head">running attack…</span>
+          ) : (
             <>
-              <span className="act-head ok">access ✓ — choose one attack</span>
-              {PAYLOADS.map((id) => {
-                const s = (steps ?? []).find((x) => x.id === id);
-                return (
-                  <button key={id} className={"act" + (s?.status === "done" ? " done" : "")} disabled={!!busy} onClick={() => act(id)} title={PLAYBOOK[id]}>
-                    {s?.label ?? id}
-                  </button>
-                );
-              })}
-              <button className="act ghost" disabled={!!busy} onClick={reset}>⟲ reset</button>
+              <span className="act-head ok">attack complete</span>
+              <button className="act ghost" disabled={busy === "reset"} onClick={reset}>⟲ reset &amp; close</button>
             </>
-          ) : chosen ? (
-            <>
-              <span className={"act-head" + (runningChosen ? "" : " ok")}>{runningChosen ? "running attack…" : "attack complete"}</span>
-              <button className="act ghost" disabled={busy === "reset"} onClick={reset}>⟲ reset &amp; choose again</button>
-            </>
-          ) : null}
+          )}
           {err && <p className="err">{err}</p>}
         </div>
       )}

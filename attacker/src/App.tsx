@@ -24,6 +24,8 @@ export default function App() {
   const root = useRef<HTMLDivElement>(null);
   const rig = useRef<HTMLDivElement>(null);
   const laptop = useRef<HTMLDivElement>(null);
+  const opened = useRef(reduced);
+  const closeFn = useRef<() => void>(() => {});
 
   useEffect(() => {
     const r = root.current!, rg = rig.current!, lp = laptop.current!;
@@ -47,10 +49,9 @@ export default function App() {
       setPose(s, -y2, -z2, -LID_OPEN_DEG, 0);
     };
 
-    let opened = reduced;
     const open = async () => {
-      if (opened) return;
-      opened = true;
+      if (opened.current) return;
+      opened.current = true;
       r.classList.add("open");
       setPose(0.9, 150, 0, -26, 0);
       r.style.setProperty("--open", "1");          // 1. swing the lid open
@@ -64,14 +65,25 @@ export default function App() {
       r.classList.add("booted");
       setBooted(true);
     };
+    // Reverse of open(): the camera eases back out and the lid shuts, back to the closed desk.
+    const close = () => {
+      if (!opened.current) return;
+      opened.current = false;
+      setBooted(false);
+      r.classList.remove("booted", "booting", "zooming");
+      r.style.setProperty("--open", "0");
+      setPose(0.9, 150, 0, -26, 0);
+      window.setTimeout(() => { if (!opened.current) r.classList.remove("open"); }, reduced ? 0 : 1450);
+    };
+    closeFn.current = close;
 
     if (reduced) { r.classList.add("open", "booted"); r.style.setProperty("--open", "1"); }
     else setPose(0.9, 150, 0, -26, 0);
 
     const onClick = () => open();
-    const onKey = (e: KeyboardEvent) => { if ((e.key === "Enter" || e.key === " ") && !opened) { e.preventDefault(); open(); } };
+    const onKey = (e: KeyboardEvent) => { if ((e.key === "Enter" || e.key === " ") && !opened.current) { e.preventDefault(); open(); } };
     const onMove = (e: MouseEvent) => {
-      if (opened) return;
+      if (opened.current) return;
       const x = e.clientX / innerWidth - 0.5, y = e.clientY / innerHeight - 0.5;
       setPose(0.9, 150, 0, -26 - y * 8, x * 18);
     };
@@ -129,7 +141,7 @@ export default function App() {
               <div className="lid-front">
                 <div className="screen">
                   <div className="flash" />
-                  <Terminal booted={booted} />
+                  <Terminal booted={booted} onClose={() => closeFn.current()} />
                 </div>
               </div>
             </div>

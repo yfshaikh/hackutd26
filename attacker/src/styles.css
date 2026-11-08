@@ -162,6 +162,8 @@ button { font: inherit; color: inherit; }
 .act.danger:hover:not(:disabled) { background-color: #b0184a; }
 .act.done { background: #1d3b30; color: var(--green); }
 .act.done::before { content: "✓ "; }
+.act.next-btn { background: #141033; color: var(--cyan); box-shadow: inset 0 0 0 1px var(--cyan); min-width: 150px; justify-content: center; }
+.act.next-btn:hover:not(:disabled) { background: #1a1540; box-shadow: inset 0 0 0 1px var(--cyan), 0 0 18px rgba(94,242,255,.28); }
 .act.ghost { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px rgba(219,196,255,.2); }
 .act.ghost:hover:not(:disabled) { background-color: rgba(219,196,255,.08); color: var(--ink); }
 .act:disabled { opacity: .4; cursor: not-allowed; }

@@ -2,7 +2,6 @@ import { useState } from "react";
 import type { AgentId } from "../agents";
 import { AgentMap } from "../components/AgentMap";
 import { Chat } from "../components/Chat";
-import { ClusterView } from "../components/ClusterView";
 import { DecisionBand } from "../components/DecisionBand";
 import { Framing } from "../components/Framing";
 import { IncidentRecord } from "../components/IncidentRecord";
@@ -10,9 +9,9 @@ import { ScopeBoard } from "../components/ScopeBoard";
 import { Timeline } from "../components/Timeline";
 import { useLive } from "../context";
 
+// Cluster health lives on the Floor page, so it isn't duplicated as a side tab here.
 const TABS = [
   { id: "scope", label: "Scope", Panel: ScopeBoard },
-  { id: "cluster", label: "Cluster", Panel: ClusterView },
   { id: "record", label: "Record", Panel: IncidentRecord },
   { id: "chat", label: "Chat", Panel: Chat },
 ] as const;
