@@ -297,6 +297,21 @@ export interface Session {
   user: User;
 }
 
+/** GET /defender/metrics — the measurable outcome of the current incident. */
+export interface DefenderMetrics {
+  detectedAt: string | null;
+  firstContainedAt: string | null;
+  timeToContainSeconds: number | null;
+  detectionCadenceSeconds: number;
+  containmentActions: { autonomous: number; approved: number; total: number };
+  approvals: { total: number; meanTimeToApproveSeconds: number | null };
+  gpuHoursSaved: number;
+  dollarsSaved: number;
+  gpuUsdPerHour: number;
+  manualBaselineSeconds: number;
+  speedupVsManual: number | null;
+}
+
 // ---- WS-C: eval results (GET /defender/evals) ----------------------------
 
 export type EvalStatus = "pass" | "fail" | "na";

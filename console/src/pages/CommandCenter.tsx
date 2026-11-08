@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AgentId } from "../agents";
 import { AgentMap } from "../components/AgentMap";
 import { Chat } from "../components/Chat";
+import { Scoreboard } from "../components/Scoreboard";
 import { DecisionBand } from "../components/DecisionBand";
 import { Framing } from "../components/Framing";
 import { IncidentRecord } from "../components/IncidentRecord";
@@ -13,7 +14,7 @@ import { useLive } from "../context";
 const TABS = [
   { id: "scope", label: "Scope", Panel: ScopeBoard },
   { id: "record", label: "Record", Panel: IncidentRecord },
-  { id: "chat", label: "Chat", Panel: Chat },
+  { id: "chat", label: "War room", Panel: Chat },
 ] as const;
 
 export function CommandCenter() {
@@ -26,6 +27,7 @@ export function CommandCenter() {
   return (
     <>
       <DecisionBand />
+      <Scoreboard />
       <main className="board">
         <AgentMap selected={agent} onSelect={setAgent} />
         <Timeline agent={agent} onClear={() => setAgent(null)} />

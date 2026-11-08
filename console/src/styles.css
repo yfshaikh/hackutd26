@@ -304,6 +304,17 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
   grid-template-areas: "agents agents" "timeline side";
   align-items: start;
 }
+
+/* Measurable-outcome scoreboard (the "improving [outcome]" of the pitch). */
+.scoreboard { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0 20px 2px; }
+.score-tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); padding: 11px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.score-tile.hero { border-color: var(--accent); box-shadow: 0 0 0 1px var(--glow); }
+.score-val { font-family: var(--display); font-style: italic; font-weight: 800; font-size: 25px; line-height: 1.05; color: var(--text); }
+.score-tile.hero .score-val { color: var(--accent); }
+.score-val i { font-style: normal; font-size: 14px; color: var(--muted); font-weight: 600; }
+.score-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 700; }
+.score-sub { font-size: 11px; color: var(--faint); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .scoreboard { grid-template-columns: repeat(2, 1fr); } }
 .agent-strip { grid-area: agents; }
 .timeline-panel { grid-area: timeline; }
 .side { grid-area: side; }

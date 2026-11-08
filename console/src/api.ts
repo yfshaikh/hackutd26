@@ -89,6 +89,8 @@ export const logout = () => post<void>("/auth/logout");
 
 export const getSnapshot = () => request<Snapshot>("/snapshot");
 
+export const getMetrics = () => request<import("./types").DefenderMetrics>("/defender/metrics");
+
 export const approve = (id: string) =>
   post<Approval>(`/approvals/${encodeURIComponent(id)}/approve`);
 export const deny = (id: string) =>

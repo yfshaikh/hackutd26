@@ -29,10 +29,11 @@ export function Login() {
       <form className="login-card form" onSubmit={submit}>
         <img className="login-art" src="/mascots/crew.png" alt="" />
         <div>
-          <h1>Sign in to the operator console</h1>
+          <h1>Out-of-band command center</h1>
           <p className="lede">
-            <strong>NMC · SOC</strong> — monitoring the GPU cluster for <strong>Halloran &amp; Vance LLP</strong> (client).
-            This console runs off the attacked box, so a fully compromised cluster cannot reach it.
+            The secure war room for <strong>Halloran &amp; Vance LLP</strong> during a live incident.
+            It runs <strong>off the compromised network</strong> — email, phones, and file shares are
+            assumed hostile, so this is where responders see what happened and coordinate the response.
           </p>
         </div>
         {status === "offline" && (

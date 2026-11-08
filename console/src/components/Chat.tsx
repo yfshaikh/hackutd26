@@ -59,8 +59,12 @@ export function Chat() {
   return (
     <section className="panel chat-panel" aria-labelledby="chat-h">
       <div className="panel-head">
-        <h2 id="chat-h">People chat</h2>
-        <span className="aside">{messages.length} message{messages.length === 1 ? "" : "s"}</span>
+        <h2 id="chat-h">War room</h2>
+        <span className="aside">
+          {messages.length === 0
+            ? "Email & phones are down — coordinate here"
+            : `${messages.length} message${messages.length === 1 ? "" : "s"}`}
+        </span>
       </div>
       {!snapshot ? (
         <NoData connection={connection} what="People chat" />
@@ -69,7 +73,7 @@ export function Chat() {
       ) : history === null ? (
         <p className="hint">Loading chat history…</p>
       ) : messages.length === 0 ? (
-        <p className="hint">No messages yet. Person-to-person updates on this incident appear here.</p>
+        <p className="hint">No messages yet. With email and phones down, stakeholders — legal, IT, execs — coordinate the response here.</p>
       ) : (
         <ol className="chat-feed" aria-live="polite">
           {messages.map((m) => (

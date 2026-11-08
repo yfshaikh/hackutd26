@@ -54,6 +54,12 @@ export function TopBar() {
         {user?.role === "admin" && <Link href="/users">Users</Link>}
       </nav>
       <div className="topbar-right">
+        <span
+          className="chip t-clean"
+          title="This war room runs off the compromised network. The attacker can see email, phones and file shares — but not this channel."
+        >
+          ⬡ Out-of-band
+        </span>
         {record && (
           <span className={`chip t-${incidentStatus(record.status).tone}`}>{incidentStatus(record.status).label}</span>
         )}
