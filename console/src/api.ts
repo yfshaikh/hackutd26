@@ -13,6 +13,7 @@ import type {
   AttackStep,
   AttackStepId,
   ConnectionState,
+  EvalsResults,
   IncidentRecord,
   IncidentRecordPatch,
   NewUser,
@@ -119,6 +120,19 @@ export const resetCluster = () => post<AttackResult>("/reset");
 
 export const listUsers = () => request<User[]>("/users");
 export const addUser = (user: NewUser) => post<User>("/users", user);
+
+// ---- WS-C: eval results --------------------------------------------------
+
+/** Eval results, or null when none have been produced yet (backend returns 404 or {}). */
+export async function getEvals(): Promise<EvalsResults | null> {
+  try {
+    const data = await request<EvalsResults | Record<string, never>>("/defender/evals");
+    return "runs" in data ? (data as EvalsResults) : null;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+}
 
 // ---- Live events ---------------------------------------------------------
 

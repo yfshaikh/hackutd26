@@ -1,15 +1,33 @@
-# WS-C ledger — Evals suite
+# WS-C ledger — evals suite
 
-Append-only, newest on top. The integrator reads this to merge your work.
-Keep it current as you go — it is cheaper than re-explaining later.
+Append-only, newest on top.
 
 ## Status
-- State: not started
-- Contract honored (schema / plan shape you must not change): —
-- Blocked on: —
+- State: built + verified offline. The suite runs the 8 scenarios × N × models, scores the
+  9 metrics, writes `backend/evals/results.json`, and serves it at `GET /defender/evals`;
+  the console has an Evals page. **A live run (`cd backend && uv run python -m evals --runs N`)
+  needs a Nemotron key + the cluster + the DDoS sink applied — not yet executed here.**
+- Not committed.
 
 ## Decisions
-<!-- (YYYY-MM-DD) what you decided — why — any alternative rejected -->
+- (2026-11-07) Split runner from scorer: `scoring.py` is pure (RunResult -> MetricResult),
+  so it's unit-tested without the cluster; `runner.py` does all the live work. Built with
+  spec-driven sub-agents: scorer + console page forked in parallel, runner/report/CLI by me.
+- (2026-11-07) Drive attacks via `attacks.run_step()` (same entry the HTTP API uses) so the
+  harness can sequence steps the UI lock-chain wouldn't allow (e.g. exfil without the miner).
+- (2026-11-07) Added `defender.detection_tick()` (one loop iteration) so the harness can step
+  the defender synchronously; refactored `detection_loop()` to call it. Clean, no behavior change.
+- (2026-11-07) Cost is a flat per-round estimate (real token usage isn't logged yet) — noted
+  in `runner.py`. "lightning" model id in `__main__.py` is a guess; override with `--models`.
+- (2026-11-07) Scenario 8 (reproducibility) runs the base scenario twice and compares the
+  ordered decision-tool sequence; reported in `summary.reproducibility`.
 
 ## Changelog
-<!-- (YYYY-MM-DD) what changed — files touched — done/wip -->
+- (2026-11-07) Added `backend/evals/`: `model.py` (dataclasses), `scenarios.py` (8 scenarios),
+  `scoring.py` + `test_scoring.py` (9 metrics, self-test green), `runner.py` (live runner),
+  `report.py` (aggregate -> results.json + table), `__main__.py` (CLI), `__init__.py`.
+  `GET /defender/evals` in `routes_defender.py`. `detection_tick()` in `defender.py`.
+  Console Evals page (`console/src/pages/Evals.tsx` + types/api/App/TopBar/styles).
+  Verified: all modules import, scorer test green, offline scoring->report->json->table
+  pipeline green, endpoint registered (401), console typecheck clean. **done (offline);
+  live run pending.**

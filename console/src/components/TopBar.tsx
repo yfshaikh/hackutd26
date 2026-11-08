@@ -34,6 +34,7 @@ export function TopBar() {
       <nav className="nav" aria-label="Main">
         <Link href="/">Command center</Link>
         <Link href="/floor">Floor</Link>
+        <Link href="/evals">Evals</Link>
         {user?.role === "admin" && <Link href="/users">Users</Link>}
         <Link href="/attack">Attack panel</Link>
       </nav>

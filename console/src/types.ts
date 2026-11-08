@@ -290,3 +290,66 @@ export interface NewUser {
 export interface Session {
   user: User;
 }
+
+// ---- WS-C: eval results (GET /defender/evals) ----------------------------
+
+export type EvalStatus = "pass" | "fail" | "na";
+
+export interface EvalMetric {
+  name: string;
+  status: EvalStatus;
+  detail?: string;
+}
+
+export interface EvalRun {
+  scenarioId: string;
+  scenarioName: string;
+  model: string;
+  runIndex: number;
+  ok: boolean;
+  error: string | null;
+  detectSeconds: number | null;
+  containSeconds: number | null;
+  agentRounds: number;
+  usdEstimate: number;
+  metrics: EvalMetric[];
+}
+
+export interface EvalScenarioMeta {
+  id: string;
+  name: string;
+  kind: string;
+  description: string;
+}
+
+export interface EvalMetricTally {
+  pass: number;
+  fail: number;
+  na: number;
+}
+
+export interface EvalScenarioSummary {
+  name: string;
+  passRate: number;
+  byMetric: Record<string, EvalMetricTally>;
+}
+
+export interface EvalModelSummary {
+  passRate: number;
+  meanDetectSeconds: number | null;
+  meanContainSeconds: number | null;
+  runs: number;
+}
+
+export interface EvalsResults {
+  generatedAt: string;
+  models: string[];
+  runsPerScenario: number;
+  scenarios: EvalScenarioMeta[];
+  runs: EvalRun[];
+  summary: {
+    metricNames: string[];
+    byScenario: Record<string, EvalScenarioSummary>;
+    byModel: Record<string, EvalModelSummary>;
+  };
+}

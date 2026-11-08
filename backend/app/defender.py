@@ -735,27 +735,34 @@ def _check_exfil_evidence() -> None:
             return
 
 
+def detection_tick() -> list[tuple[str, str]]:
+    """One detection cycle: detect, fold in drop-site exfil evidence, and escalate any
+    NEW findings to the agent. Returns the findings escalated this tick. The background
+    detection_loop() calls this every 4 s; the WS-C evals harness calls it directly to
+    step the defender synchronously."""
+    findings = _detect()
+    _check_exfil_evidence()
+    new = [(k, t) for (k, t) in findings if k not in _handled]
+    if new:
+        for k, t in new:
+            _handled.add(k)
+            ensure_incident()
+            sys_sev = "critical" if k.startswith("weights") else "high"
+            tgt = k.split(":", 1)[1] if ":" in k else None
+            store.add_timeline(kind="system", actor="Detector",
+                               text=f"Detection: {t}", severity=sys_sev, target=tgt)
+            _record_merge({"affectedSystems": [tgt] if tgt else [], "phase": "containment"})
+        trigger = "; ".join(t for _, t in new)
+        run_agent(trigger)
+    return new
+
+
 async def detection_loop() -> None:
     """Background task: poll for threats, escalate new ones to Nemotron."""
     await asyncio.to_thread(verify_readonly_identity)  # prove the agent's identity is read-only, once at startup
     while True:
         try:
-            findings = await asyncio.to_thread(_detect)
-            await asyncio.to_thread(_check_exfil_evidence)
-            new = [(k, t) for (k, t) in findings if k not in _handled]
-            if new:
-                for k, t in new:
-                    _handled.add(k)
-                    ensure_incident()
-                    sys_sev = "critical" if k.startswith("weights") else "high"
-                    tgt = k.split(":", 1)[1] if ":" in k else None
-                    store.add_timeline(kind="system", actor="Detector",
-                                       text=f"Detection: {t}", severity=sys_sev, target=tgt)
-                    _record_merge({"affectedSystems": [tgt] if tgt else [], "phase": "containment"})
-                trigger = "; ".join(t for _, t in new)
-                await asyncio.to_thread(run_agent, trigger)
-            if not findings and not _handled:
-                pass
+            await asyncio.to_thread(detection_tick)
         except Exception:  # noqa: BLE001
             pass
         await asyncio.sleep(4)

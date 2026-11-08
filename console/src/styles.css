@@ -653,3 +653,15 @@ textarea.input { resize: vertical; min-height: 38px; }
   a { text-decoration: none; color: #000; }
   @page { margin: 14mm; }
 }
+
+/* ---- WS-C evals page ---------------------------------------------------- */
+.evals { display: flex; flex-direction: column; gap: 14px; padding: 14px; max-width: 1100px; margin: 0 auto; width: 100%; }
+.evals-scroll { overflow-x: auto; }
+.evals-grid { border-collapse: collapse; width: 100%; font-size: 13px; }
+.evals-grid th, .evals-grid td { padding: 7px 10px; text-align: center; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.evals-grid thead th { font-weight: 700; color: var(--muted); font-size: 12px; }
+.evals-rowhead { text-align: left !important; font-weight: 600; }
+.evals-grid td .chip { min-width: 40px; justify-content: center; }
+.evals-sid { display: inline-block; min-width: 1.4em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.evals-rate { margin-left: 8px; color: var(--muted); font-weight: 700; font-variant-numeric: tabular-nums; }
+.evals-model { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }

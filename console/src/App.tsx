@@ -3,6 +3,7 @@ import { TopBar } from "./components/TopBar";
 import { Empty } from "./components/Empty";
 import { LiveProvider, SessionProvider, useSession } from "./context";
 import { CommandCenter } from "./pages/CommandCenter";
+import { Evals } from "./pages/Evals";
 import { Login } from "./pages/Login";
 import { Users } from "./pages/Users";
 import { navigate, usePath } from "./router";
@@ -15,6 +16,7 @@ const ATTACKER_APP_URL = (import.meta.env.VITE_ATTACKER_URL as string | undefine
 const TITLES: Record<string, string> = {
   "/": "Operator console",
   "/floor": "Floor",
+  "/evals": "Evaluations",
   "/users": "Users & roles",
   "/attack": "Attacker workstation",
 };
@@ -39,6 +41,8 @@ function Signed({ path }: { path: string }) {
         <TopBar />
         {path === "/users" ? (
           <Users />
+        ) : path === "/evals" ? (
+          <Evals />
         ) : path === "/floor" ? (
           <Suspense fallback={<Empty title="Loading the floor…" />}>
             <FloorPage />
