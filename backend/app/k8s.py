@@ -27,6 +27,7 @@ Concepts (new here?):
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from kubernetes import client, config
@@ -70,30 +71,46 @@ def admin_rbac() -> client.RbacAuthorizationV1Api:
     return client.RbacAuthorizationV1Api(admin())
 
 
+def admin_apps() -> client.AppsV1Api:
+    return client.AppsV1Api(admin())
+
+
 # ---------------------------------------------------------------------------
 # WS-A: the defender agent's two scoped identities.
 #   agent_readonly() - what the agent investigates with. RBAC denies every write.
 #   executor()       - runs ONLY actions a human (or policy) approved. Privileged.
 # Tokens are minted in-memory via the TokenRequest API (never read from a file,
-# never printed). If the ServiceAccounts aren't applied yet, we fall back to the
-# admin client and say so once, so the demo degrades loudly instead of crashing.
+# never printed). They expire after an hour, so the cached client is refreshed a
+# few minutes early on the next call; `reset_agent_clients()` can force it sooner.
+# If minting fails we REFUSE the call instead of falling back to the admin
+# identity: a silent admin fallback would give the AI full write power and defeat
+# the read-only/executor split that the whole safety story rests on.
 # ---------------------------------------------------------------------------
-_sa_clients: dict[str, client.ApiClient] = {}
-_sa_fallback_warned: set[str] = set()
+_TOKEN_TTL_SECONDS = 3600
+_TOKEN_REFRESH_SKEW_SECONDS = 300  # re-mint 5 minutes before the API server expires it
+
+_sa_clients: dict[str, tuple[client.ApiClient, float]] = {}  # name -> (client, refresh_at)
+
+
+class AgentIdentityUnavailable(RuntimeError):
+    """The scoped ServiceAccount could not be used. Callers must fail closed."""
 
 
 def _mint_sa_client(sa_name: str) -> client.ApiClient:
     from .config import AGENT_SA_NS
-    if sa_name in _sa_clients:
-        return _sa_clients[sa_name]
+    cached = _sa_clients.get(sa_name)
+    if cached and time.time() < cached[1]:
+        return cached[0]
     admin()  # ensure host + CA are loaded into the default config
     try:
         req = client.AuthenticationV1TokenRequest(
-            spec=client.V1TokenRequestSpec(expiration_seconds=3600, audiences=[])
+            spec=client.V1TokenRequestSpec(expiration_seconds=_TOKEN_TTL_SECONDS, audiences=[])
         )
-        token = admin_core().create_namespaced_service_account_token(
+        resp = admin_core().create_namespaced_service_account_token(
             name=sa_name, namespace=AGENT_SA_NS, body=req
-        ).status.token
+        )
+        token = resp.status.token
+        expires_at = resp.status.expiration_timestamp
         base = client.Configuration.get_default_copy()
         cfg = client.Configuration()
         cfg.host = base.host
@@ -103,12 +120,19 @@ def _mint_sa_client(sa_name: str) -> client.ApiClient:
         cfg.api_key_prefix = {"authorization": "Bearer"}
         api = client.ApiClient(cfg)
     except ApiException as e:  # SA not applied yet, or TokenRequest unavailable
-        if sa_name not in _sa_fallback_warned:
-            _sa_fallback_warned.add(sa_name)
-            print(f"[k8s] ServiceAccount '{sa_name}' unavailable ({e.reason}); using admin "
-                  f"fallback. Apply deploy/30-agent-rbac.yaml to enable the real split.")
-        api = admin()
-    _sa_clients[sa_name] = api
+        # FAIL CLOSED. Do not return the admin client here: the agent would then be
+        # able to do anything the backend can do, and the read-only/executor split
+        # would be a lie. The tool call gets an error the model can report instead.
+        raise AgentIdentityUnavailable(
+            f"ServiceAccount '{sa_name}' unavailable ({e.reason or e.status}). Refusing to "
+            "fall back to the admin identity; apply deploy/30-agent-rbac.yaml and restart."
+        ) from e
+    # Refresh before the API server's own expiry (it can grant less than requested),
+    # not after a 401.
+    hard_expiry = (
+        expires_at.timestamp() if expires_at else time.time() + _TOKEN_TTL_SECONDS
+    )
+    _sa_clients[sa_name] = (api, hard_expiry - _TOKEN_REFRESH_SKEW_SECONDS)
     return api
 
 
@@ -143,9 +167,8 @@ def executor_rbac() -> client.RbacAuthorizationV1Api:
 
 
 def reset_agent_clients() -> None:
-    """Drop cached SA clients (after RBAC changes or token expiry)."""
+    """Force the next agent call to mint fresh tokens (after RBAC changes or a 401)."""
     _sa_clients.clear()
-    _sa_fallback_warned.clear()
 
 
 def set_attacker_token(token: str) -> None:
@@ -226,10 +249,10 @@ def first_pod_name(api: client.ApiClient, namespace: str, label_selector: str) -
 
 
 __all__ = [
-    "admin", "admin_core", "admin_batch", "admin_net", "admin_rbac",
+    "admin", "admin_core", "admin_batch", "admin_net", "admin_rbac", "admin_apps",
     "agent_readonly", "agent_readonly_core",
     "executor", "executor_core", "executor_batch", "executor_net", "executor_rbac",
-    "reset_agent_clients",
+    "reset_agent_clients", "AgentIdentityUnavailable",
     "attacker", "attacker_core", "attacker_batch",
     "set_attacker_token", "has_attacker_token", "attacker_token",
     "clear_attacker_token", "exec_in_pod", "first_pod_name",

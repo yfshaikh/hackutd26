@@ -1,178 +1,223 @@
 import { useState, type ReactNode } from "react";
 import { useLive, useSession } from "../context";
-import { dateTime, clock } from "../format";
+import { clock, dateTime } from "../format";
 import { canEditRecord, incidentStatus, PHASES } from "../labels";
-import type { IncidentRecord as IncidentRecordData } from "../types";
-import { Empty, NoData, NoIncident } from "./Empty";
+import type { IncidentRecord as IncidentRecordData, RecordAction } from "../types";
+import { NoData, NoIncident } from "./Empty";
 import { BreachCountdown } from "./BreachCountdown";
 import { RecordEditor } from "./RecordEditor";
-import { SeverityChip } from "./Status";
+import { SeverityChip, VerdictChip } from "./Status";
 
-function Field({ label, children, empty }: { label: string; children?: ReactNode; empty?: boolean }) {
+// The NIST SP 800-61 record laid out as a case file, in the order a partner reads it:
+// what happened → how we know → what we did → what's left. Fields only a human fills in
+// (lessons learned, notified parties) live in their own clearly-labelled review section
+// instead of showing up as a wall of "Not known yet".
+
+function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
-    <div className="field">
-      <dt>{label}</dt>
-      <dd>{empty ? <span className="pending">Not known yet</span> : children}</dd>
-    </div>
+    <section className="case-sec">
+      <header className="case-sec-head">
+        <h3>{title}</h3>
+        {hint && <span className="aside">{hint}</span>}
+      </header>
+      {children}
+    </section>
   );
 }
 
-function List({ items }: { items: string[] }) {
+function Pending({ children }: { children: ReactNode }) {
+  return <p className="case-pending">{children}</p>;
+}
+
+/** Phase stepper: where in the NIST lifecycle the incident is. */
+function Phases({ phase }: { phase: string }) {
+  const at = PHASES.findIndex((p) => p.id === phase);
   return (
-    <ul>
-      {items.map((s, i) => (
-        <li key={`${s}-${i}`} className={s.includes("/") || s.includes(":") ? "mono" : undefined}>{s}</li>
+    <ol className="case-phases" aria-label="Response phase">
+      {PHASES.map((p, i) => (
+        <li key={p.id} className={i < at ? "done" : i === at ? "now" : undefined} aria-current={i === at ? "step" : undefined}>
+          {p.label}
+        </li>
       ))}
-    </ul>
+    </ol>
+  );
+}
+
+/** "quarantine_pod(name=x) — quarantined x (approved by Dana)" → call + outcome. */
+function splitAction(text: string): { call?: string; outcome: string } {
+  const m = text.match(/^([a-z_]+\([^)]*\))\s+—\s+(.*)$/s);
+  return m ? { call: m[1], outcome: m[2] } : { outcome: text };
+}
+
+function Actions({ actions }: { actions: RecordAction[] }) {
+  if (actions.length === 0) return <Pending>No containment actions yet. The Advisor acts once the Investigator hands off.</Pending>;
+  return (
+    <ol className="case-actions">
+      {actions.map((a, i) => {
+        const { call, outcome } = splitAction(a.text);
+        return (
+          <li key={`${a.ts}-${i}`}>
+            <time className="mono" dateTime={a.ts}>{clock(a.ts)}</time>
+            <div>
+              {call && <code className="case-call">{call}</code>}
+              <span className="case-outcome">{outcome}</span>
+              <span className="case-by">{a.by}</span>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
 export function IncidentRecord({
   record: supplied,
   readOnly = false,
-  showActions = true,
+  aside,
 }: {
   /** Show this record instead of the live one (e.g. an archived incident). */
   record?: IncidentRecordData | null;
   /** Archived records are read-only: hide the editor and PDF controls. */
   readOnly?: boolean;
-  /** The Incident page renders actions in its own prominent panel, so hide the field here. */
-  showActions?: boolean;
+  /** Extra side-rail content (the live scope board). */
+  aside?: ReactNode;
 } = {}) {
   const { snapshot, connection, apply } = useLive();
   const { user } = useSession();
   const [editing, setEditing] = useState(false);
-  const live = snapshot?.record ?? null;
-  const r = supplied === undefined ? live : supplied;
+  const r = supplied === undefined ? snapshot?.record ?? null : supplied;
   const canEdit = !readOnly && canEditRecord(user?.role);
 
-  return (
-    <section className="panel" aria-labelledby="rec-h">
-      <div className="panel-head">
-        <h2 id="rec-h">Incident record</h2>
-        <div className="panel-tools">
-          <span className="aside">NIST SP 800-61{r ? `, updated ${clock(r.updatedAt)}` : ""}</span>
-          {r && canEdit && (
-            <button className="btn btn-ghost no-print" onClick={() => setEditing((v) => !v)}>
-              {editing ? "Close editor" : "Edit record"}
-            </button>
-          )}
-          {r && !editing && !readOnly && (
-            <button className="btn no-print" onClick={() => window.print()} title="Print or save as PDF">
-              Export PDF
-            </button>
-          )}
-        </div>
-      </div>
+  if (!snapshot && supplied === undefined) return <section className="panel"><NoData connection={connection} what="The incident record" /></section>;
+  if (!r) return <section className="panel"><NoIncident /></section>;
 
-      {!snapshot && supplied === undefined ? (
-        <NoData connection={connection} what="The incident record" />
-      ) : !r ? (
-        <NoIncident />
-      ) : editing ? (
-        <RecordEditor
-          record={r}
-          onSaved={(updated) => apply({ type: "record", record: updated })}
-          onCancel={() => setEditing(false)}
-        />
+  const st = incidentStatus(r.status);
+  const hyps = [...(r.hypotheses ?? [])].sort((a, b) => order(a.verdict) - order(b.verdict));
+  const open = r.status !== "resolved";
+  const fillLater = open ? "The Advisor writes this when containment finishes." : "Not recorded.";
+  const review = [r.lessonsLearned, r.incidentCommander, r.closedAt].some(Boolean) || (r.notifiedParties ?? []).length > 0;
+
+  return (
+    <div className="case">
+      <section className="panel case-head">
+        <div className="print-only print-head">
+          <strong>NMC operator console · Client: {snapshot?.firm ?? "Client incident response"}</strong>
+          <span>NIST SP 800-61 incident record · exported {dateTime(new Date().toISOString())}</span>
+        </div>
+        <div className="case-title">
+          <div>
+            <h2>{r.title}</h2>
+            <p className="case-meta">
+              <span className="mono">{r.id}</span>
+              {r.detectedAt && <> · detected {dateTime(r.detectedAt)}{r.reportedBy && <> by {r.reportedBy}</>}</>}
+              {" "}· updated {clock(r.updatedAt)}
+            </p>
+          </div>
+          <div className="case-tools no-print">
+            {canEdit && (
+              <button className="btn btn-ghost" onClick={() => setEditing((v) => !v)}>
+                {editing ? "Close editor" : "Edit record"}
+              </button>
+            )}
+            {!editing && !readOnly && (
+              <button className="btn" onClick={() => window.print()} title="Print or save as PDF">Export PDF</button>
+            )}
+          </div>
+        </div>
+        <div className="case-status">
+          <span className={`chip t-${st.tone}`}>{st.label}</span>
+          <SeverityChip severity={r.severity} />
+          {r.categories.map((c) => <span key={c} className="tag">{c}</span>)}
+          <Phases phase={r.phase} />
+        </div>
+      </section>
+
+      {editing ? (
+        <section className="panel">
+          <RecordEditor record={r} onSaved={(u) => apply({ type: "record", record: u })} onCancel={() => setEditing(false)} />
+        </section>
       ) : (
-        <>
-          <div className="print-only print-head">
-            <strong>NMC operator console · Client: {snapshot?.firm ?? "Client incident response"}</strong>
-            <span>NIST SP 800-61 incident record · exported {dateTime(new Date().toISOString())}</span>
-          </div>
-          <div className="record-title">
-            <h3>{r.title}</h3>
-            <span className="id mono">{r.id}</span>
-          </div>
-          <dl className="record" key={r.updatedAt}>
-            <Field label="Status">
-              <span className={`chip t-${incidentStatus(r.status).tone}`}>{incidentStatus(r.status).label}</span>{" "}
-              {PHASES.find((p) => p.id === r.phase)?.label ?? r.phase} phase
-            </Field>
-            <Field label="Severity">
-              <SeverityChip severity={r.severity} />
-            </Field>
-            <Field label="Commander" empty={!r.incidentCommander}>
-              {r.incidentCommander}
-            </Field>
-            <Field label="Detected" empty={!r.detectedAt}>
-              {dateTime(r.detectedAt)}
-              {r.reportedBy && <> by {r.reportedBy}</>}
-            </Field>
-            <Field label="Summary" empty={!r.summary}>
-              {r.summary}
-            </Field>
-            <Field label="Category" empty={r.categories.length === 0}>
-              {r.categories.join(", ")}
-            </Field>
-            <Field label="Attack vector" empty={!r.vector}>
-              {r.vector}
-            </Field>
-            <Field label="Affected systems" empty={r.affectedSystems.length === 0}>
-              <List items={r.affectedSystems} />
-            </Field>
-            <Field label="Business impact" empty={!r.impact}>
-              {r.impact}
-            </Field>
-            <Field label="Root cause" empty={!r.rootCause}>
-              {r.rootCause}
-            </Field>
-            <Field label="Evidence" empty={(r.evidence ?? []).length === 0}>
-              <List items={r.evidence ?? []} />
-            </Field>
-            <Field label="Containment" empty={(r.containmentMeasures ?? []).length === 0}>
-              <List items={r.containmentMeasures ?? []} />
-            </Field>
-            <div className="field field-wide">
-              <dt>Breach deadlines</dt>
-              <dd>
-                <BreachCountdown
-                  deadlines={r.notificationDeadlines ?? []}
-                  fallbackDueAt={r.notificationDueAt}
-                />
-              </dd>
-            </div>
-            {showActions && (
-              <Field label="Actions taken" empty={r.actionsTaken.length === 0}>
-                <ol>
-                  {r.actionsTaken.map((a, i) => (
-                    <li key={i}>
-                      {a.text}
-                      <div className="act-meta">
-                        {clock(a.ts)}, {a.by}
-                      </div>
+        <div className={`case-grid${aside ? "" : " no-aside"}`}>
+          <div className="panel case-main">
+            <Section title="What happened">
+              {r.summary ? <p className="case-prose">{r.summary}</p> : <Pending>{fillLater}</Pending>}
+              <dl className="case-pair">
+                <div><dt>Business impact</dt><dd>{r.impact || <span className="case-pending">{fillLater}</span>}</dd></div>
+                <div><dt>Root cause</dt><dd>{r.rootCause || r.vector || <span className="case-pending">{fillLater}</span>}</dd></div>
+              </dl>
+            </Section>
+
+            <Section title="How we know" hint="the Investigator's hypotheses and the evidence behind each">
+              {hyps.length === 0 ? (
+                <Pending>No hypotheses filed yet. The Investigator files one per candidate explanation as it reads the cluster.</Pending>
+              ) : (
+                <ul className="case-hyps">
+                  {hyps.map((h) => (
+                    <li key={h.name} className={`v-${h.verdict}`}>
+                      <div className="case-hyp-top"><strong>{h.name}</strong><VerdictChip verdict={h.verdict} /></div>
+                      {h.evidence && <p>{h.evidence}</p>}
                     </li>
                   ))}
-                </ol>
-              </Field>
-            )}
-            <Field label="Next steps" empty={r.nextSteps.length === 0}>
-              <ol>
-                {r.nextSteps.map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
-              </ol>
-            </Field>
-            <Field label="Notified" empty={(r.notifiedParties ?? []).length === 0}>
-              {(r.notifiedParties ?? []).join(", ")}
-            </Field>
-            <Field label="Lessons learned" empty={!r.lessonsLearned}>
-              {r.lessonsLearned}
-            </Field>
-            <Field label="Closed" empty={!r.closedAt}>
-              {dateTime(r.closedAt)}
-            </Field>
-          </dl>
-          <p className="record-foot no-print">
-            <strong>Survives a compromised cluster.</strong> This record and the approval path run
-            in the operator console off the attacked box; wiping the cluster cannot erase them.
-          </p>
-        </>
+                </ul>
+              )}
+            </Section>
+
+            <Section title="What we did" hint={`${r.actionsTaken.length} action${r.actionsTaken.length === 1 ? "" : "s"}`}>
+              <Actions actions={r.actionsTaken} />
+            </Section>
+
+            <Section title="Post-incident review" hint="filled in by the incident commander">
+              {review ? (
+                <dl className="case-pair">
+                  <div><dt>Commander</dt><dd>{r.incidentCommander || "—"}</dd></div>
+                  <div><dt>Notified</dt><dd>{(r.notifiedParties ?? []).join(", ") || "—"}</dd></div>
+                  <div><dt>Lessons learned</dt><dd>{r.lessonsLearned || "—"}</dd></div>
+                  <div><dt>Closed</dt><dd>{r.closedAt ? dateTime(r.closedAt) : "—"}</dd></div>
+                </dl>
+              ) : (
+                <Pending>
+                  Not started. After recovery, a person records who led the response, who was notified and
+                  what to change{canEdit ? " — use Edit record" : ""}.
+                </Pending>
+              )}
+            </Section>
+          </div>
+
+          <aside className="case-side">
+            <section className="panel case-rail">
+              <header className="case-sec-head"><h3>Client notification</h3></header>
+              <p className="case-explain">
+                Once client data leaves the cluster, the firm has 72 hours to notify affected clients
+                (state breach-notification law). The clock starts automatically on confirmed exfiltration.
+              </p>
+              <BreachCountdown deadlines={r.notificationDeadlines ?? []} fallbackDueAt={r.notificationDueAt} />
+            </section>
+
+            <section className="panel case-rail">
+              <header className="case-sec-head"><h3>Open items</h3></header>
+              {r.nextSteps.length === 0 ? (
+                <Pending>Nothing outstanding.</Pending>
+              ) : (
+                <ol className="case-steps">{r.nextSteps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+              )}
+            </section>
+
+            {aside}
+
+            <section className="panel case-rail">
+              <header className="case-sec-head"><h3>Facts</h3></header>
+              <dl className="case-facts">
+                <dt>Attack vector</dt><dd>{r.vector || "Not identified yet"}</dd>
+                <dt>Affected systems</dt>
+                <dd>{r.affectedSystems.length ? r.affectedSystems.map((s) => <code key={s} className="case-call">{s}</code>) : "None confirmed yet"}</dd>
+                {(r.evidence ?? []).length > 0 && <><dt>Evidence</dt><dd><ul>{r.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul></dd></>}
+              </dl>
+            </section>
+          </aside>
+        </div>
       )}
-      {snapshot && r && !editing && !readOnly && r.actionsTaken.length === 0 && r.affectedSystems.length === 0 && (
-        <Empty title="Record opened">Fields fill in as agents and responders act.</Empty>
-      )}
-    </section>
+    </div>
   );
 }
+
+const order = (v: string) => ["confirmed", "likely", "possible", "ruled_out"].indexOf(v);

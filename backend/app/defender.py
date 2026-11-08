@@ -33,6 +33,7 @@ The through-line is the NMC pattern: the agent proposes, CODE enforces.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 import uuid
@@ -44,6 +45,7 @@ from . import config
 from .cluster import quarantine_np_names, read_gpus
 from .hub import store
 from .k8s import (
+    AgentIdentityUnavailable,
     ApiException,
     admin,
     admin_batch,
@@ -55,7 +57,7 @@ from .k8s import (
     executor_rbac,
     first_pod_name,
 )
-from .models import Approval, IncidentRecord, RecordAction, now_iso
+from .models import Approval, Hypothesis, IncidentRecord, RecordAction, now_iso
 
 AGENT = "Sentinel (Nemotron)"  # umbrella name for incident bookkeeping (reportedBy, record_action)
 
@@ -142,7 +144,9 @@ def _record_merge(fields: dict) -> None:
     for k, v in fields.items():
         if not hasattr(rec, k):
             continue
-        if k in ("categories", "affectedSystems", "nextSteps") and isinstance(v, list):
+        # nextSteps is the CURRENT plan: replace it, so re-runs don't pile up stale steps.
+        # Categories / affected systems accumulate (union) as more of the attack is found.
+        if k in ("categories", "affectedSystems") and isinstance(v, list):
             cur = getattr(rec, k)
             for item in v:
                 if item not in cur:
@@ -165,8 +169,8 @@ def _record_merge(fields: dict) -> None:
 # READ_TOOLS = safe look-only actions (list/describe pods, read logs, GPU stats).
 # RECORD_TOOLS = updating our own incident paperwork (scope + the NIST record).
 # Neither changes the cluster, so both always run autonomously (no approval).
-READ_TOOLS = {"list_pods", "describe_pod", "get_pod_logs", "gpu_status"}
-RECORD_TOOLS = {"update_scope", "update_incident_record"}
+READ_TOOLS = {"list_pods", "describe_pod", "get_pod_logs", "gpu_status", "get_runbook"}
+RECORD_TOOLS = {"update_scope", "update_incident_record", "record_hypothesis"}
 # External-service lookups the agents make to enrich the incident with real-world data — a live
 # CVE/NVD lookup for the exploited vector and a crypto-price lookup to size the stolen GPU compute
 # (see enrich.py). Read-only and off-cluster, so they always run autonomously; shown in the main
@@ -241,7 +245,10 @@ def _runbook_for(tool: str) -> dict:
 # the second. (The backend's own monitoring keeps using the admin identity; that's
 # the trusted SIEM, not the agent.)
 def _do_list_pods(namespace: str = config.LAWFIRM_NS) -> str:
-    core = agent_readonly_core()  # the agent investigates read-only
+    try:
+        core = agent_readonly_core()  # the agent investigates read-only
+    except AgentIdentityUnavailable as e:
+        return f"error: {e}"
     quarantined = quarantine_np_names()
     rows = []
     for p in core.list_namespaced_pod(namespace).items:
@@ -259,6 +266,8 @@ def _do_list_pods(namespace: str = config.LAWFIRM_NS) -> str:
 def _do_describe_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
     try:
         p = agent_readonly_core().read_namespaced_pod(name, namespace)
+    except AgentIdentityUnavailable as e:
+        return f"error: {e}"
     except ApiException as e:
         return f"error: {e.reason}"
     vols = [
@@ -283,6 +292,8 @@ def _do_describe_pod(name: str, namespace: str = config.LAWFIRM_NS) -> str:
 def _do_get_pod_logs(name: str, namespace: str = config.LAWFIRM_NS) -> str:
     try:
         return agent_readonly_core().read_namespaced_pod_log(name, namespace, tail_lines=40) or "(empty)"
+    except AgentIdentityUnavailable as e:
+        return f"error: {e}"
     except ApiException as e:
         return f"error: {e.reason}"
 
@@ -375,6 +386,8 @@ def verify_readonly_identity() -> str:
             body=client.V1DeleteOptions(grace_period_seconds=0),
         )
         result, ok = "FAIL: read-only identity was allowed to delete (RBAC too broad)", False
+    except AgentIdentityUnavailable as e:
+        result, ok = f"NOT verified: {e}", False
     except ApiException as e:
         if e.status == 403:
             result, ok = f"confirmed read-only: delete denied by RBAC (403 {e.reason})", True
@@ -408,7 +421,8 @@ _RECORD_ENUMS = {
     "severity": {"info", "low", "medium", "high", "critical"},
 }
 _RECORD_LISTS = {"affectedSystems", "nextSteps", "categories"}
-_RECORD_TEXT = {"vector", "title"}
+_RECORD_TEXT = {"vector", "title", "summary", "impact", "rootCause"}
+_VERDICTS = {"possible", "likely", "confirmed", "ruled_out"}
 
 
 def _do_update_incident_record(fields: dict) -> str:
@@ -430,6 +444,40 @@ def _do_update_incident_record(fields: dict) -> str:
     if errors:
         return "ERROR, not applied: " + "; ".join(errors) + (f". Applied: {sorted(clean)}" if clean else "")
     return "incident record updated"
+
+
+# Incident runbooks: one Markdown file per scenario in backend/runbooks/. The agents read them
+# through get_runbook; the console renders the same files on its Runbooks page.
+RUNBOOK_DIR = config.BACKEND_DIR / "runbooks"
+
+
+def runbooks() -> dict[str, str]:
+    """Every runbook, id (file stem) -> Markdown. Read fresh so an edited file takes effect."""
+    return {p.stem: p.read_text() for p in sorted(RUNBOOK_DIR.glob("*.md"))}
+
+
+def _do_get_runbook(scenario: str = "") -> str:
+    books = runbooks()
+    key = scenario.strip().lower()
+    if key in books:
+        return books[key]
+    return f"No runbook named {scenario!r}. Available: {', '.join(books)}"
+
+
+def _do_record_hypothesis(name: str = "", verdict: str = "", evidence: str = "") -> str:
+    """File (or update) one hypothesis on the record. Keyed by name, so re-filing the same
+    hypothesis as evidence changes moves its verdict instead of adding a duplicate."""
+    name = name.strip().lower()
+    if not name:
+        return "ERROR, not applied: name is required"
+    if verdict not in _VERDICTS:
+        return f"ERROR, not applied: verdict={verdict!r} is not one of {sorted(_VERDICTS)}"
+    rec = ensure_incident()
+    h = Hypothesis(name=name, verdict=verdict, evidence=evidence.strip(), ts=now_iso())
+    rec.hypotheses = [x for x in rec.hypotheses if x.name != name] + [h]
+    rec.updatedAt = now_iso()
+    store.set_record(rec)
+    return f"hypothesis '{name}' recorded as {verdict}"
 
 
 def _do_lookup_cve(keyword: str = "unauthenticated Jupyter Ray notebook remote code execution") -> str:
@@ -454,6 +502,7 @@ _RAW = {
     "describe_pod": _do_describe_pod,
     "get_pod_logs": _do_get_pod_logs,
     "gpu_status": _do_gpu_status,
+    "get_runbook": _do_get_runbook,
     "lookup_cve": _do_lookup_cve,
     "mining_impact": _do_mining_impact,
     "delete_pod": _do_delete_pod,
@@ -463,6 +512,7 @@ _RAW = {
     "cordon_node": _do_cordon_node,
     "update_scope": _do_update_scope,
     "update_incident_record": _do_update_incident_record,
+    "record_hypothesis": _do_record_hypothesis,
 }
 
 _TOOL_TARGET = lambda args: args.get("name") or args.get("asset") or args.get("namespace") or ""
@@ -508,7 +558,12 @@ def _pod_logs_for(tool: str, args: dict) -> str | None:
 def run_tool_approved(tool: str, args: dict, approval_id: str, by: str) -> str:
     """Execute a tool that a human just approved. Bypasses the pending gate."""
     pod_logs = _pod_logs_for(tool, args)
-    result = _RAW[tool](**args)
+    try:
+        result = _RAW[tool](**args)
+    except AgentIdentityUnavailable as e:
+        # Fail closed: never retry with the admin identity. The approval stays consumed
+        # and the timeline records why the executor could not act.
+        result = f"refused: {e}"
     store.add_timeline(
         kind="agent",
         actor=_AGENT_NAME[EXECUTOR],
@@ -620,6 +675,20 @@ def _dispatch(tool: str, args: dict) -> str:
             reasoning=_round_reasoning or None,
             agent=_current_agent,
         )
+    elif tool == "record_hypothesis" and not result.startswith("ERROR"):
+        # A hypothesis is the visible reasoning chain: on the main timeline AND the trace,
+        # tagged so the console highlights it. Paperwork, so not an "action taken".
+        verdict = args.get("verdict", "").replace("_", " ")
+        store.add_timeline(
+            kind="agent",
+            actor=_AGENT_NAME.get(_current_agent, AGENT),
+            text=f"Hypothesis — {args.get('name', '').strip().lower()}: {verdict}. {args.get('evidence', '')}".strip(),
+            severity="info",
+            reasoning=_round_reasoning or None,
+            agent=_current_agent,
+            hypothesis={"name": args.get("name", "").strip().lower(), "verdict": args.get("verdict"),
+                        "evidence": args.get("evidence", "")},
+        )
     else:
         # A mutating tool that ran without approval: the Executor identity did the write.
         is_write = tool not in RECORD_TOOLS
@@ -637,7 +706,8 @@ def _dispatch(tool: str, args: dict) -> str:
             pod_logs=pod_logs,
             agent=EXECUTOR if is_write else _current_agent,
         )
-        record_action(f"{_summarize_call(tool, args)} — {result}")
+        if is_write:  # paperwork (scope / record edits) isn't a response action
+            record_action(f"{_summarize_call(tool, args)} — {result}")
     _log_decision({"tool": tool, "args": args, "mode": mode, "decision": "executed", "result": result})
     return result
 
@@ -674,6 +744,13 @@ def _tool_schemas() -> list[dict]:
         fn("get_pod_logs", "Tail a pod's logs.", {**nm, **ns}, ["name"]),
         fn("gpu_status", "Current GPU utilization and memory from nvidia-smi.", {}, []),
         fn(
+            "get_runbook",
+            "Read the firm's incident runbook for a scenario: how to confirm it, the ordered containment "
+            "steps (with their RB-0x action ids and which need a human), what to record, and when it is done. "
+            "Use 'containment-actions' for the individual actions.",
+            {"scenario": {"type": "string", "enum": sorted(runbooks())}}, ["scenario"],
+        ),
+        fn(
             "lookup_cve",
             "Look up the REAL CVE for the exploited vector in NVD (returns id, CVSS score, summary). "
             "Describe the exploit in plain words, e.g. 'unauthenticated Jupyter/Ray notebook remote code execution'.",
@@ -706,8 +783,21 @@ def _tool_schemas() -> list[dict]:
                 "nextSteps": {"type": "array", "items": {"type": "string"}},
                 "categories": {"type": "array", "items": {"type": "string"}},
                 "vector": {"type": "string"},
+                "summary": {"type": "string", "description": "2-3 sentences: what happened"},
+                "impact": {"type": "string", "description": "business impact: data lost, $ compute stolen, clients affected"},
+                "rootCause": {"type": "string", "description": "how the attacker got in (the exploited weakness)"},
             }}},
             ["fields"],
+        ),
+        fn(
+            "record_hypothesis",
+            "File one hypothesis you are weighing, with its verdict and the evidence behind it. Call it "
+            "when you form a hypothesis (verdict 'possible') and AGAIN whenever a tool result changes it "
+            "('likely', 'confirmed' or 'ruled_out'). Same name = update, not a duplicate.",
+            {"name": {"type": "string", "description": "short label, e.g. 'cryptojacking', 'data exfiltration', 'persistence', 'lateral movement'"},
+             "verdict": {"type": "string", "enum": sorted(_VERDICTS)},
+             "evidence": {"type": "string", "description": "the concrete tool output that supports this verdict, one sentence"}},
+            ["name", "verdict", "evidence"],
         ),
         fn(
             "consult_investigator",
@@ -731,7 +821,7 @@ _SCENARIO = (
 # Tool subsets per stage. Triage and the Investigator only look + update our own paperwork;
 # ONLY the Advisor gets the mutating tools, so the approve/executor gate lives in one place.
 _TRIAGE_TOOLS = READ_TOOLS | {"update_incident_record"}
-_INVESTIGATOR_TOOLS = READ_TOOLS | ENRICH_TOOLS | {"update_scope"}  # forensics also enriches via NVD / price APIs
+_INVESTIGATOR_TOOLS = READ_TOOLS | ENRICH_TOOLS | {"update_scope", "record_hypothesis"}  # forensics also enriches via NVD / price APIs
 _ADVISOR_TOOLS = set(_RAW) | {"consult_investigator"}  # every cluster tool + the two-way consult
 
 TRIAGE_PROMPT = _SCENARIO + (
@@ -750,17 +840,16 @@ INVESTIGATOR_PROMPT = _SCENARIO + (
     "describe_pod and get_pod_logs on the suspicious pod), NEVER prose. Do not state a conclusion or hand "
     "off until you have read the suspicious pod's details and logs with the tools — a hypothesis is not "
     "evidence. Each round, work like a detective:\n\n"
-    "1) COMPETING HYPOTHESES: name what this incident could be before you dig — at minimum "
-    "cryptojacking/mining, data exfiltration, persistence/backdoor, and lateral movement. Hold every "
-    "one that is still plausible; drop a hypothesis only when evidence rules it out. More than one "
-    "may be true at once.\n"
+    "1) COMPETING HYPOTHESES: the candidates are cryptojacking, data exfiltration, persistence and "
+    "lateral movement — more than one may be true at once. After your first reads, call "
+    "record_hypothesis for EACH candidate with verdict 'possible' (or 'ruled_out' if the evidence "
+    "already excludes it), citing the tool output.\n"
     "2) NEXT DISCRIMINATING TOOL: choose the single next read (list_pods, describe_pod, get_pod_logs, "
-    "gpu_status) that best separates the live hypotheses. In your reasoning, say which hypothesis the "
-    "call is meant to confirm or rule out. The next tool must depend on what the last result showed — "
-    "never a stock sequence.\n"
-    "3) BEGIN EACH ROUND with a one-line state in your reasoning, exactly in this form:\n"
-    "   HYPOTHESES: mining=<likely|possible|ruled out>; exfil=<...>; persistence=<...>; lateral=<...>\n"
-    "   then branch on the evidence:\n"
+    "gpu_status) that best separates the live hypotheses. The next tool must depend on what the last "
+    "result showed — never a stock sequence.\n"
+    "3) UPDATE: whenever a result changes a hypothesis, call record_hypothesis again with the new "
+    "verdict ('likely', 'confirmed' or 'ruled_out') and the evidence. Before you hand off, every "
+    "candidate must have a final verdict. Branch on the evidence:\n"
     "   - GPU pinned ~100% + an unowned GPU pod and no egress -> MINING branch: describe the pod and "
     "     read its logs to confirm the miner command/image and GPU draw; size the impact.\n"
     "   - Bytes leaving, or a non-model-server pod mounting the weights PVC -> EXFIL branch: find where "
@@ -796,6 +885,9 @@ ADVISOR_PROMPT = _SCENARIO + (
     "Investigator has mapped the scope (both are in your context). ACT FIRST: immediately "
     "quarantine and then delete the unknown attacker pod(s) (owner=none) — stop the bleeding "
     "before anything else. Only AFTER that, handle persistence and identity.\n\n"
+    "RUNBOOKS: in your FIRST round, call get_runbook ONLY for the scenario(s) the Investigator actually "
+    "confirmed — usually one or two, never all of them — alongside your first containment call, and "
+    "follow that runbook's Contain order. Name the runbooks you followed in your final summary.\n\n"
     "You MAY call consult_investigator(question) AT MOST ONCE, and only if you genuinely cannot "
     "act without a detail their handoff did not cover. Do not use it to re-ask what they already "
     "told you, and never consult twice — contain instead.\n\n"
@@ -809,9 +901,55 @@ ADVISOR_PROMPT = _SCENARIO + (
     "for approval; that is expected). Do not just list it as a next step. Advance the phase with "
     "update_incident_record (containment -> eradication) and list next steps. Record the CVE the "
     "Investigator found as the incident `vector` via update_incident_record (e.g. 'CVE-2023-48022 — "
-    "unauthenticated notebook RCE'). When containment is done, stop calling tools and give a "
-    "one-paragraph summary that states the CVE and the $ compute impact."
+    "unauthenticated notebook RCE'). In that same update, fill the record for the firm's partners: "
+    "`summary` (2-3 sentences, what happened), `impact` (what was lost or stolen, incl. the $ compute "
+    "figure and whether client data left), `rootCause` (the exploited weakness + the stolen token), and "
+    "`nextSteps` (at most 4, the remaining human work). When containment is done, stop calling tools "
+    "and give a one-paragraph summary that states the CVE and the $ compute impact."
 )
+
+
+# Tool-call budget per agent (the force-answer round is the last of these).
+_ROUNDS = {TRIAGE: 6, INVESTIGATOR: 8, ADVISOR: 8}
+
+# How the policy gate treats each tool, in words, for the console's agent "Setup" tab.
+# The real decision is classify(); this only labels it for people.
+_TOOL_POLICY = {
+    **{t: "autonomous · read-only" for t in READ_TOOLS},
+    **{t: "autonomous · incident paperwork" for t in RECORD_TOOLS},
+    **{t: "autonomous · external lookup" for t in ENRICH_TOOLS},
+    "quarantine_pod": "autonomous · reversible, attacker only",
+    "delete_pod": "autonomous for unknown pods · human approval for owned pods",
+    "delete_cronjob": "autonomous unless allowlisted · then human approval",
+    "revoke_service_account": "always needs human approval",
+    "cordon_node": "always needs human approval",
+    "consult_investigator": "agent-to-agent · once per incident",
+}
+
+
+def agent_specs() -> list[dict]:
+    """What each reasoning agent actually runs with — model, system prompt, tool budget and the
+    exact tool schemas it is offered — read from the same constants run_agent uses, so the
+    console shows the real configuration rather than a description of it."""
+    schemas = {t["function"]["name"]: t["function"] for t in _tool_schemas()}
+    roles = [
+        (TRIAGE, config.NEMOTRON_FAST_MODEL, TRIAGE_PROMPT, _TRIAGE_TOOLS),
+        (INVESTIGATOR, config.NEMOTRON_FAST_MODEL, INVESTIGATOR_PROMPT, _INVESTIGATOR_TOOLS),
+        (ADVISOR, config.NEMOTRON_MODEL, ADVISOR_PROMPT, _ADVISOR_TOOLS),
+    ]
+    return [
+        {
+            "id": role, "name": _AGENT_NAME[role], "model": model, "rounds": _ROUNDS[role],
+            "systemPrompt": prompt,
+            "tools": [
+                {**schemas[n], "policy": _TOOL_POLICY.get(n, "needs human approval"),
+                 "implementation": inspect.getsource(_RAW.get(n, _consult)),
+                 "runbookRef": _RUNBOOK[n]["runbookRef"] if n in _RUNBOOK else None}
+                for n in sorted(allowed) if n in schemas
+            ],
+        }
+        for role, model, prompt, allowed in roles
+    ]
 
 
 def nemotron_configured() -> bool:
@@ -855,35 +993,9 @@ def _consult(oai, question: str) -> str:
     return answer or "(the Investigator found nothing further)"
 
 
-_HYPOTHESIS_PREFIX = "HYPOTHESES:"
-
-
-def _log_hypothesis_state(role: str, reasoning: str) -> None:
-    """Spec 05 (visible branching): surface the Investigator's one-line hypothesis state in its
-    trace each round, so the console can watch it narrow in ("mining=likely; exfil=ruled out").
-    The prompt asks for an explicit HYPOTHESES: line; if the model omits one, fall back to the
-    first line of its round reasoning so the trace still shows the decision. Trace-only: this is
-    investigative colour, not main-timeline story."""
-    if role != INVESTIGATOR or not reasoning:
-        return
-    line = next((ln.strip() for ln in reasoning.splitlines()
-                 if ln.strip().upper().startswith(_HYPOTHESIS_PREFIX)), "")
-    if not line:
-        lines = [ln.strip() for ln in reasoning.splitlines() if ln.strip()]
-        if not lines:
-            return
-        line = lines[0]
-    if len(line) > 240:
-        line = line[:237] + "..."
-    store.add_timeline(
-        kind="agent", actor=_AGENT_NAME[role], agent=role, severity="info",
-        text=line, trace_only=True,
-    )
-
-
 def _run_role(oai, *, role: str, model: str, system_prompt: str,
               allowed: set[str], context: str, rounds: int = 6,
-              log_hypotheses: bool = False) -> str:
+              require_tool: str | None = None) -> str:
     """Run ONE agent as a Nemotron tool-loop to completion and return its final text (the
     handoff to the next stage). Same loop mechanics for all three; the role differs only in
     its prompt, which tools it may call, and which model runs it.
@@ -901,6 +1013,8 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
     ]
     final = ""
     consults = 0  # the Advisor may consult the Investigator at most once (keeps it from looping)
+    called: set[str] = set()  # tool names this agent actually used, for require_tool
+    nudged = False
     for _round in range(rounds):
         # On the LAST round, withhold the tools and tell the model to wrap up. A reasoning model
         # left with tools will keep calling them until the budget runs out and never writes a
@@ -928,8 +1042,6 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
         # Carry this round's real model reasoning onto the actions it triggers. Some Nemotron
         # deployments surface it as reasoning_content rather than content.
         _round_reasoning = (msg.content or "").strip() or (getattr(msg, "reasoning_content", "") or "").strip()
-        if tool_calls and log_hypotheses:
-            _log_hypothesis_state(role, _round_reasoning)
         messages.append({
             "role": "assistant",
             "content": msg.content or "",
@@ -939,6 +1051,14 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
                 for tc in tool_calls
             ] or None,
         })
+        if not tool_calls and require_tool and require_tool not in called and not last and not nudged:
+            # The agent tried to finish without the tool its job hinges on (the Investigator's
+            # record_hypothesis). One nudge, then accept whatever it does — never a loop.
+            nudged = True
+            messages.append({"role": "user", "content": (
+                f"You have not called {require_tool} yet. Call it now for each hypothesis, with the "
+                "evidence you found, before you hand off.")})
+            continue
         if not tool_calls:  # the model is done (or was forced to wrap up) — this is its final text
             final = (msg.content or "").strip() or _round_reasoning
             if final:
@@ -946,6 +1066,7 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
             break
         for tc in tool_calls:
             fname = tc.function.name
+            called.add(fname)
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
@@ -995,6 +1116,18 @@ def run_agent(trigger: str) -> None:
         return
 
     try:
+        # Fail closed before spending model calls: both scoped identities must be usable.
+        # (Constructing the clients only mints tokens; it performs no cluster write.)
+        agent_readonly_core()
+        executor_core()
+    except AgentIdentityUnavailable as e:
+        store.add_timeline(
+            kind="system", actor="System", severity="high",
+            text=f"Agent identity unavailable — pipeline paused (failing closed, not using admin): {e}",
+        )
+        return
+
+    try:
         oai = _client()
     except Exception as e:  # noqa: BLE001
         store.add_timeline(kind="system", actor="System",
@@ -1010,7 +1143,7 @@ def run_agent(trigger: str) -> None:
     # 1) Triage — fast model, classify only.
     triage = _run_role(
         oai, role=TRIAGE, model=config.NEMOTRON_FAST_MODEL, system_prompt=TRIAGE_PROMPT,
-        allowed=_TRIAGE_TOOLS, context=base + "\nClassify this incident, then hand off to the Investigator.",
+        allowed=_TRIAGE_TOOLS, rounds=_ROUNDS[TRIAGE], context=base + "\nClassify this incident, then hand off to the Investigator.",
     )
     _handoff(TRIAGE, INVESTIGATOR, triage)
 
@@ -1018,8 +1151,8 @@ def run_agent(trigger: str) -> None:
     #    what the last result showed, and each round's hypothesis state is surfaced in its trace.
     inv = _run_role(
         oai, role=INVESTIGATOR, model=config.NEMOTRON_FAST_MODEL, system_prompt=INVESTIGATOR_PROMPT,
-        allowed=_INVESTIGATOR_TOOLS, rounds=8,  # scope 4 assets + CVE + mining impact needs the room
-        log_hypotheses=True,
+        allowed=_INVESTIGATOR_TOOLS, rounds=_ROUNDS[INVESTIGATOR],  # scope 4 assets + CVE + mining impact needs the room
+        require_tool="record_hypothesis",
         context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\nForm your hypotheses, decide the "
         "next discriminating read each round, then hand off to the Advisor.",
     )
@@ -1029,11 +1162,15 @@ def run_agent(trigger: str) -> None:
     #    human so it does not re-propose a decision that is already on the operator's queue.
     advisor_summary = _run_role(
         oai, role=ADVISOR, model=config.NEMOTRON_MODEL, system_prompt=ADVISOR_PROMPT,
-        allowed=_ADVISOR_TOOLS, rounds=8,
+        allowed=_ADVISOR_TOOLS, rounds=_ROUNDS[ADVISOR],
         context=base + f"\nTriage assessment:\n{triage or '(none)'}\n\n"
         f"Investigator findings:\n{inv or '(none)'}\n\n{_pending_summary()}\n\n"
         "Propose and execute the ranked remediation now.",
     )
+    # The record's summary must never be blank: if the Advisor skipped filling it, its own
+    # closing paragraph is exactly that summary.
+    if advisor_summary and store.record and not store.record.summary:
+        _record_merge({"summary": advisor_summary})
 
     # 4) Verify-and-reconverge — the Advisor checks its own work. Deleting a miner pod is not
     #    enough while a CronJob keeps recreating it, so re-observe the live cluster (read-only)
@@ -1106,7 +1243,14 @@ def _detect() -> list[tuple[str, str]]:
     findings: list[tuple[str, str]] = []
     core = admin_core()
     try:
-        pods = core.list_namespaced_pod(config.LAWFIRM_NS).items
+        # A pod that is already being deleted is not "still rogue": the API keeps it
+        # (with a deletionTimestamp) while the container shuts down, which for a GPU
+        # pod can be tens of seconds. Counting it makes the verify pass and the 4 s
+        # detector re-escalate a workload that is already gone.
+        pods = [
+            p for p in core.list_namespaced_pod(config.LAWFIRM_NS).items
+            if p.metadata.deletion_timestamp is None
+        ]
     except ApiException:
         return findings
 
@@ -1114,8 +1258,6 @@ def _detect() -> list[tuple[str, str]]:
         name = p.metadata.name
         labels = p.metadata.labels or {}
         owner = labels.get("owner")
-        if p.status.phase in ("Succeeded", "Failed") and p.metadata.deletion_timestamp:
-            continue
         # unknown pod in lawfirm (every legitimate workload carries owner=law-firm)
         if owner is None:
             findings.append((f"rogue-pod:{name}", f"Unknown pod '{name}' with no owner label in lawfirm."))
@@ -1130,6 +1272,10 @@ def _detect() -> list[tuple[str, str]]:
     # cronjobs not on the allowlist
     try:
         for cj in admin_batch().list_namespaced_cron_job(config.LAWFIRM_NS).items:
+            # Same rule as pods: a CronJob being torn down (background GC) is not
+            # residual persistence, even if the API still returns it for a moment.
+            if cj.metadata.deletion_timestamp is not None:
+                continue
             if cj.metadata.name not in config.CRONJOB_ALLOWLIST:
                 findings.append((f"rogue-cronjob:{cj.metadata.name}",
                                  f"Unexpected CronJob '{cj.metadata.name}' in lawfirm (persistence)."))

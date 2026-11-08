@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useState } from "react";
 import { useLive } from "../context";
 import type { Cluster } from "../types";
 import { Empty, NoData } from "./Empty";
-import { NodeDetail, type Selection } from "./NodeDetail";
+import { NodeDetail, PodRow, type Selection } from "./NodeDetail";
 import { HealthChip, utilTone } from "./Status";
 
 const Floor3D = lazy(() => import("../floor/Floor3D"));
@@ -65,10 +65,11 @@ function Nodes2D({ cluster, onSelect }: { cluster: Cluster; onSelect: (s: Select
             {pods.length > 0 && (
               <ul className="pods">
                 {pods.map((p) => (
-                  <li key={p.namespace + p.name} className={`pod${p.quarantined ? " quarantined" : ""}`}>
-                    <span className="pname mono" title={`${p.namespace}/${p.name}`}>{p.name}</span>
-                    {p.quarantined ? <span className="chip t-contained">Quarantined</span> : <HealthChip health={p.health} />}
-                  </li>
+                  <PodRow
+                    key={p.namespace + p.name}
+                    pod={p}
+                    onOpen={() => onSelect({ node: p.node || n.name, namespace: p.namespace, pod: p.name })}
+                  />
                 ))}
               </ul>
             )}
@@ -107,7 +108,13 @@ export function ClusterView({ initialView = "2d" }: { initialView?: "2d" | "3d" 
         </Suspense>
       )}
       {sel && cluster && snapshot && (
-        <NodeDetail cluster={cluster} assets={snapshot.assets} sel={sel} onClose={close} />
+        <NodeDetail
+          cluster={cluster}
+          assets={snapshot.assets}
+          sel={sel}
+          onSelect={setSel}
+          onClose={close}
+        />
       )}
     </section>
   );

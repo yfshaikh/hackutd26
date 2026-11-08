@@ -76,6 +76,104 @@ export interface Cluster {
   gpuHistory: number[];
 }
 
+// ---- Pod inspection (GET /cluster/pods/{namespace}/{name}) ---------------
+
+export interface PodWorkload {
+  /** Deployment, StatefulSet, DaemonSet, Job, CronJob… resolved past ReplicaSets. */
+  kind: string;
+  name: string;
+}
+
+export interface PodContainerPort {
+  name?: string;
+  containerPort: number;
+  protocol: string;
+}
+
+export interface PodVolumeMount {
+  name: string;
+  mountPath: string;
+  readOnly: boolean;
+  subPath?: string;
+}
+
+export interface PodContainerDetail {
+  name: string;
+  image: string;
+  imagePullPolicy?: string;
+  command: string[];
+  args: string[];
+  ports: PodContainerPort[];
+  /** e.g. `{ limits: { "nvidia.com/gpu": "1" } }` */
+  resources: Record<string, Record<string, string>>;
+  /** Environment variable names only — values never leave the cluster. */
+  env: string[];
+  envFrom: string[];
+  volumeMounts: PodVolumeMount[];
+  ready: boolean;
+  restartCount: number;
+  state: "running" | "waiting" | "terminated" | "unknown";
+  stateReason?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number;
+  lastState?: string;
+  lastExitCode?: number;
+}
+
+export interface PodVolume {
+  name: string;
+  kind: string;
+  source?: string;
+  readOnly: boolean;
+}
+
+export interface PodCondition {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+  lastTransitionTime?: string;
+}
+
+/** One pod, fully described, for the floor drawer. */
+export interface PodDetail {
+  name: string;
+  namespace: string;
+  node: string;
+  phase: Pod["phase"];
+  owner: PodOwner;
+  usesGpu: boolean;
+  health: Health;
+  quarantined: boolean;
+  note?: string;
+  /** Plain-language description of what this pod is and why it exists. */
+  summary: string;
+  workload?: PodWorkload;
+  serviceAccount: string;
+  podIP?: string;
+  hostIP?: string;
+  qosClass?: string;
+  restartPolicy?: string;
+  createdAt?: string;
+  startTime?: string;
+  labels: Record<string, string>;
+  annotations: Record<string, string>;
+  containers: PodContainerDetail[];
+  volumes: PodVolume[];
+  conditions: PodCondition[];
+}
+
+/** GET /cluster/pods/{namespace}/{name}/logs */
+export interface PodLogs {
+  namespace: string;
+  pod: string;
+  container: string;
+  tailLines: number;
+  previous: boolean;
+  text: string;
+}
+
 export type Autonomy =
   | { mode: "autonomous"; reason: string }
   | { mode: "needs-approval"; reason: string; approvalId: string };
@@ -113,6 +211,8 @@ export interface TimelineEntry {
   podLogs?: string;
   /** The attacker's own transcript lines that caused this attack event. */
   transcript?: { ts: string; kind: string; text: string }[];
+  /** Set when the Investigator filed a hypothesis via record_hypothesis. */
+  hypothesis?: { name: string; verdict: HypothesisVerdict; evidence: string };
 }
 
 export type ApprovalStatus = "pending" | "approved" | "denied";
@@ -195,8 +295,19 @@ export interface IncidentRecord {
   incidentCommander?: string;
   notifiedParties: string[];
   notificationDeadlines: NotificationDeadline[];
+  /** The Investigator's competing explanations and where the evidence left each one. */
+  hypotheses?: Hypothesis[];
   closedAt?: ISODate;
   updatedAt: ISODate;
+}
+
+export type HypothesisVerdict = "possible" | "likely" | "confirmed" | "ruled_out";
+
+export interface Hypothesis {
+  name: string;
+  verdict: HypothesisVerdict;
+  evidence: string;
+  ts: ISODate;
 }
 
 /** PATCH body for the record editor. Only present fields change. */
@@ -411,4 +522,23 @@ export interface EvalsRunStatus {
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
+}
+
+/** One reasoning agent's live configuration (GET /defender/agents). */
+export interface AgentSpec {
+  id: string;
+  name: string;
+  model: string;
+  rounds: number;
+  systemPrompt: string;
+  tools: {
+    name: string;
+    description: string;
+    parameters: { properties?: Record<string, unknown> };
+    /** How the policy gate treats it, in words. */
+    policy: string;
+    runbookRef: string | null;
+    /** The Python that runs when the agent calls it. */
+    implementation: string;
+  }[];
 }

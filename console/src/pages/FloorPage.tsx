@@ -18,7 +18,7 @@ export function FloorPage() {
         <section className="panel" aria-labelledby="floor-h">
           <div className="panel-head">
             <h2 id="floor-h">Data center floor</h2>
-            <span className="aside">Drag to orbit, scroll to zoom, click a rack or GPU for details</span>
+            <span className="aside">Drag to orbit, scroll to zoom, click a rack, GPU or pod for details</span>
           </div>
           {!snapshot ? (
             <NoData connection={connection} what="The floor" />
@@ -31,7 +31,15 @@ export function FloorPage() {
           )}
         </section>
       </main>
-      {sel && snapshot && <NodeDetail cluster={snapshot.cluster} assets={snapshot.assets} sel={sel} onClose={close} />}
+      {sel && snapshot && (
+        <NodeDetail
+          cluster={snapshot.cluster}
+          assets={snapshot.assets}
+          sel={sel}
+          onSelect={setSel}
+          onClose={close}
+        />
+      )}
     </>
   );
 }

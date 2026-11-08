@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 Severity = Literal["info", "low", "medium", "high", "critical"]
 AssetStatus = Literal["clean", "investigating", "exfiltrated", "encrypted", "contained"]
@@ -79,6 +79,106 @@ class Cluster(BaseModel):
     gpuHistory: list[float]
 
 
+# --- Pod inspection (GET /cluster/pods/{namespace}/{name}) -----------------
+# The floor drawer can drill into one pod to answer "what is this, what is it
+# asking for, and what is it saying?" Specs come from the live Pod object; the
+# summary is a plain-language sentence built from labels/commands/image.
+class PodWorkload(BaseModel):
+    """The controller that owns this pod, resolved past ReplicaSets to the Deployment."""
+    kind: str
+    name: str
+
+
+class PodContainerPort(BaseModel):
+    name: Optional[str] = None
+    containerPort: int
+    protocol: str = "TCP"
+
+
+class PodVolumeMount(BaseModel):
+    name: str
+    mountPath: str
+    readOnly: bool = False
+    subPath: Optional[str] = None
+
+
+class PodContainerDetail(BaseModel):
+    name: str
+    image: str
+    imagePullPolicy: Optional[str] = None
+    command: list[str] = Field(default_factory=list)
+    args: list[str] = Field(default_factory=list)
+    ports: list[PodContainerPort] = Field(default_factory=list)
+    # {"limits": {...}, "requests": {...}} with only non-empty bags included.
+    resources: dict[str, dict[str, str]] = Field(default_factory=dict)
+    # Names only: env values can hold credentials, so they never leave the cluster.
+    env: list[str] = Field(default_factory=list)
+    envFrom: list[str] = Field(default_factory=list)
+    volumeMounts: list[PodVolumeMount] = Field(default_factory=list)
+    ready: bool = False
+    restartCount: int = 0
+    # running | waiting | terminated | unknown
+    state: str = "unknown"
+    stateReason: Optional[str] = None
+    startedAt: Optional[str] = None
+    finishedAt: Optional[str] = None
+    exitCode: Optional[int] = None
+    lastState: Optional[str] = None
+    lastExitCode: Optional[int] = None
+
+
+class PodVolume(BaseModel):
+    name: str
+    # configMap | pvc | secret | emptyDir | hostPath | projected | other
+    kind: str
+    source: Optional[str] = None
+    readOnly: bool = False
+
+
+class PodCondition(BaseModel):
+    type: str
+    status: str
+    reason: Optional[str] = None
+    message: Optional[str] = None
+    lastTransitionTime: Optional[str] = None
+
+
+class PodDetail(BaseModel):
+    name: str
+    namespace: str
+    node: str
+    phase: Literal["Running", "Pending", "Terminating", "Succeeded", "Failed"]
+    owner: PodOwner
+    usesGpu: bool
+    health: Health
+    quarantined: bool
+    note: Optional[str] = None
+    # One or two sentences: what this pod is and why it exists.
+    summary: str
+    workload: Optional[PodWorkload] = None
+    serviceAccount: str = "default"
+    podIP: Optional[str] = None
+    hostIP: Optional[str] = None
+    qosClass: Optional[str] = None
+    restartPolicy: Optional[str] = None
+    createdAt: Optional[str] = None
+    startTime: Optional[str] = None
+    labels: dict[str, str] = Field(default_factory=dict)
+    annotations: dict[str, str] = Field(default_factory=dict)
+    containers: list[PodContainerDetail] = Field(default_factory=list)
+    volumes: list[PodVolume] = Field(default_factory=list)
+    conditions: list[PodCondition] = Field(default_factory=list)
+
+
+class PodLogs(BaseModel):
+    namespace: str
+    pod: str
+    container: str
+    tailLines: int
+    previous: bool = False
+    text: str
+
+
 class Autonomy(BaseModel):
     mode: Literal["autonomous", "needs-approval"]
     reason: str
@@ -119,6 +219,9 @@ class TimelineEntry(BaseModel):
     reasoning: Optional[str] = None
     podLogs: Optional[str] = None
     transcript: Optional[list[TranscriptRef]] = None
+    # Set when the Investigator files a hypothesis ({name, verdict, evidence}); the console
+    # highlights these rows so the reasoning reads as a visible chain, not hidden prose.
+    hypothesis: Optional[dict] = None
 
 
 class Approval(BaseModel):
@@ -160,6 +263,19 @@ class NotificationDeadline(BaseModel):
     status: Literal["upcoming", "due", "met", "overdue"] = "upcoming"
 
 
+HypothesisVerdict = Literal["possible", "likely", "confirmed", "ruled_out"]
+
+
+class Hypothesis(BaseModel):
+    """One explanation the Investigator is weighing, filed through its record_hypothesis tool.
+    Keyed by name, so re-filing the same hypothesis updates it instead of adding a duplicate."""
+
+    name: str
+    verdict: HypothesisVerdict
+    evidence: str = ""
+    ts: str
+
+
 class IncidentRecord(BaseModel):
     id: str
     title: str
@@ -184,6 +300,7 @@ class IncidentRecord(BaseModel):
     incidentCommander: Optional[str] = None
     notifiedParties: list[str] = []
     notificationDeadlines: list[NotificationDeadline] = []
+    hypotheses: list[Hypothesis] = []
     closedAt: Optional[str] = None
     updatedAt: str
 

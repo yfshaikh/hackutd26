@@ -6,6 +6,7 @@ import { CommandCenter } from "./pages/CommandCenter";
 import { Evals } from "./pages/Evals";
 import { IncidentPage } from "./pages/IncidentPage";
 import { Login } from "./pages/Login";
+import { Runbooks } from "./pages/Runbooks";
 import { Users } from "./pages/Users";
 import { navigate, usePath } from "./router";
 
@@ -19,6 +20,7 @@ const TITLES: Record<string, string> = {
   "/floor": "Floor",
   "/evals": "Evaluations",
   "/record": "Incident record",
+  "/runbooks": "Runbooks",
   "/users": "Users & roles",
   "/attack": "Attacker workstation",
 };
@@ -47,6 +49,8 @@ function Signed({ path }: { path: string }) {
           <Evals />
         ) : path === "/record" ? (
           <IncidentPage />
+        ) : path === "/runbooks" ? (
+          <Runbooks />
         ) : path === "/floor" ? (
           <Suspense fallback={<Empty title="Loading the floor…" />}>
             <FloorPage />

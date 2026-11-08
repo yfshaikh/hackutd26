@@ -35,6 +35,18 @@ def defender_metrics(user: User = Depends(current_user)) -> dict:
     return defender.metrics()
 
 
+@router.get("/agents")
+def defender_agents(user: User = Depends(current_user)) -> list[dict]:
+    """Each reasoning agent's live configuration: model, system prompt, tool budget and tools."""
+    return defender.agent_specs()
+
+
+@router.get("/runbooks")
+def defender_runbooks(user: User = Depends(current_user)) -> list[dict]:
+    """The incident runbooks the agents read through get_runbook, as {id, body} Markdown."""
+    return [{"id": k, "body": v} for k, v in defender.runbooks().items()]
+
+
 @router.get("/evals")
 def defender_evals(user: User = Depends(current_user)) -> dict:
     """WS-C eval results. Empty dict until a run has produced evals/results.json, which the

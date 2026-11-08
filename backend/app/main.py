@@ -26,7 +26,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
+import hashlib
 import json
+import os
+import tempfile
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +42,7 @@ from .auth import COOKIE_NAME, auth, current_user, require_roles
 from .cluster import build_cluster, read_gpus, seed_assets
 from .hub import store
 from .routes_defender import router as defender_router
+from .routes_cluster import router as cluster_router
 from .routes_incident import router as incident_router
 from .transcript import transcript
 from .models import (
@@ -64,8 +70,38 @@ app.add_middleware(
 app.include_router(incident_router)
 # WS-A: additive defender metrics route (GET /defender/metrics).
 app.include_router(defender_router)
+# Read-only pod inspection for the floor drawer (specs + logs).
+app.include_router(cluster_router)
 
 _bg_tasks: list[asyncio.Task] = []
+_singleton_lock = None
+
+
+def _acquire_singleton_lock() -> None:
+    """Refuse to run a second detector/agent loop for this checkout.
+
+    Multiple `uvicorn app.main:app` processes can end up serving :8000 (a stray
+    `uv run` left in another terminal is enough). Each runs its own detection loop
+    against the same cluster, so two Advisors race: one deletes the miner, the
+    other's `quarantine_pod` then gets `Not Found` and narrates a self-termination
+    that never happened. One flock per checkout prevents that. The OS releases it
+    when the process exits, so a crash never leaves it stuck.
+    """
+    global _singleton_lock
+    key = hashlib.sha1(str(config.BACKEND_DIR).encode()).hexdigest()[:12]
+    path = Path(tempfile.gettempdir()) / f"hackutd-backend-{key}.lock"
+    fh = path.open("w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        raise RuntimeError(
+            "Another backend is already running for this checkout. Stop it before "
+            "starting a second one (two detection loops race on the same cluster)."
+        ) from None
+    fh.write(str(os.getpid()))
+    fh.flush()
+    _singleton_lock = fh
 
 
 async def _telemetry_loop() -> None:
@@ -83,6 +119,7 @@ async def _telemetry_loop() -> None:
 
 @app.on_event("startup")
 async def _startup() -> None:
+    _acquire_singleton_lock()
     loop = asyncio.get_running_loop()
     store.bind_loop(loop)
     transcript.bind_loop(loop)

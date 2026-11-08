@@ -1,5 +1,18 @@
 import { ASSET_STATUS, HEALTH, SEVERITY } from "../labels";
-import type { AssetStatus, Health, Severity } from "../types";
+import type { AssetStatus, Health, HypothesisVerdict, Severity } from "../types";
+
+// Confirmed = the bad thing is real (red); ruled out = good news (green).
+const VERDICT: Record<HypothesisVerdict, { label: string; tone: string }> = {
+  confirmed: { label: "Confirmed", tone: "exfil" },
+  likely: { label: "Likely", tone: "high" },
+  possible: { label: "Possible", tone: "invest" },
+  ruled_out: { label: "Ruled out", tone: "clean" },
+};
+
+export function VerdictChip({ verdict }: { verdict: HypothesisVerdict }) {
+  const v = VERDICT[verdict] ?? VERDICT.possible;
+  return <span className={`chip t-${v.tone}`}>{v.label}</span>;
+}
 
 export function AssetChip({ status }: { status: AssetStatus }) {
   const s = ASSET_STATUS[status];

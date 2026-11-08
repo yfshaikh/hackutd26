@@ -1,12 +1,18 @@
-// Detail drawer for one node (and optionally one GPU). Shared by the 2D and 3D views.
+// Detail drawer for one node (and optionally one GPU or one pod). Shared by the
+// 2D list and the 3D floor: click a rack/GPU for node details, click a pod (or a
+// sled in 3D) for its full spec, summary and logs.
 
 import { useEffect, useRef } from "react";
-import type { Asset, Cluster } from "../types";
+import type { Asset, Cluster, Pod } from "../types";
+import { PodInspector } from "./PodDetail";
 import { AssetChip, HealthChip, utilTone } from "./Status";
 
 export interface Selection {
   node: string;
   gpu?: number;
+  /** Selected pod name, with its namespace. Both are set together. */
+  pod?: string;
+  namespace?: string;
 }
 
 /** Assets that live on this node, matched by their Kubernetes ref. */
@@ -18,15 +24,43 @@ export function assetsOnNode(cluster: Cluster, assets: Asset[], node: string): A
   });
 }
 
+export function PodRow({ pod, onOpen }: { pod: Pod; onOpen: (p: Pod) => void }) {
+  return (
+    <li className={`pod${pod.quarantined ? " quarantined" : ""}`}>
+      <button
+        className="pod-open"
+        onClick={() => onOpen(pod)}
+        aria-label={`Inspect pod ${pod.namespace}/${pod.name}`}
+      >
+        <span className="pod-what">
+          <span className="pname mono">{pod.namespace}/{pod.name}</span>
+          <br />
+          <span className="owner">
+            {pod.owner === "unknown" ? "Unknown owner" : pod.owner === "law-firm" ? "Law firm" : "Platform"}
+            {pod.usesGpu && ", uses GPU"}, {pod.phase}
+            {pod.note && `. ${pod.note}`}
+          </span>
+        </span>
+        <span className="pod-side">
+          {pod.quarantined ? <span className="chip t-contained">Quarantined</span> : <HealthChip health={pod.health} />}
+          <span className="pod-chev" aria-hidden>›</span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
 export function NodeDetail({
   cluster,
   assets,
   sel,
+  onSelect,
   onClose,
 }: {
   cluster: Cluster;
   assets: Asset[];
   sel: Selection;
+  onSelect: (s: Selection) => void;
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -38,22 +72,52 @@ export function NodeDetail({
   }, [onClose]);
 
   const node = cluster.nodes.find((n) => n.name === sel.node);
-  const pods = cluster.pods.filter((p) => p.node === sel.node);
+  const livePod = sel.pod
+    ? cluster.pods.find((p) => p.name === sel.pod && (!sel.namespace || p.namespace === sel.namespace))
+    : undefined;
+  const namespace = sel.namespace ?? livePod?.namespace ?? "lawfirm";
+
+  // GPU workloads first when a GPU is selected: Kubernetes does not expose which
+  // GPU slot a pod got, but "requests a GPU" is the useful division.
+  const nodePods = cluster.pods.filter((p) => p.node === sel.node);
+  const gpuPods = nodePods.filter((p) => p.usesGpu);
+  const otherPods = nodePods.filter((p) => !p.usesGpu);
+  const gpuView = sel.gpu !== undefined;
   const related = assetsOnNode(cluster, assets, sel.node);
   const gpus = node ? (sel.gpu === undefined ? node.gpus : node.gpus.filter((g) => g.index === sel.gpu)) : [];
+
+  const openPod = (p: Pod) => onSelect({ node: p.node || sel.node, namespace: p.namespace, pod: p.name });
+  const backToNode = () => onSelect({ node: sel.node, gpu: sel.gpu });
+  const podRows = (list: Pod[]) => (
+    <ul className="pods">
+      {list.map((p) => (
+        <PodRow key={p.namespace + p.name} pod={p} onOpen={openPod} />
+      ))}
+    </ul>
+  );
 
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-h">
-        <div className="panel-head">
-          <h2 id="drawer-h" className="mono">
-            {sel.node}
-            {sel.gpu !== undefined && ` / GPU ${sel.gpu}`}
-          </h2>
+        <div className="panel-head drawer-head">
+          <div className="drawer-heading">
+            {sel.pod && (
+              <button className="link-btn drawer-back" onClick={backToNode}>
+                ← {sel.node}
+              </button>
+            )}
+            <h2 id="drawer-h" className="mono">
+              {sel.pod ? `${namespace}/${sel.pod}` : sel.node}
+              {!sel.pod && sel.gpu !== undefined && ` / GPU ${sel.gpu}`}
+            </h2>
+          </div>
           <button ref={closeRef} className="btn" onClick={onClose}>Close</button>
         </div>
-        {!node ? (
+
+        {sel.pod ? (
+          <PodInspector key={`${namespace}/${sel.pod}`} namespace={namespace} name={sel.pod} live={livePod} />
+        ) : !node ? (
           <div className="empty"><strong>This node is no longer reported</strong></div>
         ) : (
           <>
@@ -77,26 +141,42 @@ export function NodeDetail({
                 {g.simulatedFault && <p className="sim">Simulated fault: {g.simulatedFault}</p>}
               </div>
             ))}
-            <div className="panel-head"><h2>Pods on this node</h2><span className="aside">{pods.length}</span></div>
-            {pods.length === 0 ? (
-              <div className="empty">No pods reported on this node.</div>
+            {gpuView ? (
+              <>
+                <div className="panel-head">
+                  <h2>GPU workloads</h2>
+                  <span className="aside">{gpuPods.length} request a GPU</span>
+                </div>
+                <p className="pod-hint">
+                  Kubernetes does not pin a pod to a GPU index. Click a pod for its spec and logs.
+                </p>
+                {gpuPods.length === 0 ? (
+                  <div className="empty">No pod on this node requests a GPU right now.</div>
+                ) : (
+                  podRows(gpuPods)
+                )}
+                {otherPods.length > 0 && (
+                  <>
+                    <div className="panel-head">
+                      <h2>Other pods on this node</h2>
+                      <span className="aside">{otherPods.length}</span>
+                    </div>
+                    {podRows(otherPods)}
+                  </>
+                )}
+              </>
             ) : (
-              <ul className="pods">
-                {pods.map((p) => (
-                  <li key={p.namespace + p.name} className={`pod${p.quarantined ? " quarantined" : ""}`}>
-                    <span>
-                      <span className="pname mono">{p.namespace}/{p.name}</span>
-                      <br />
-                      <span className="owner">
-                        {p.owner === "unknown" ? "Unknown owner" : p.owner === "law-firm" ? "Law firm" : "Platform"}
-                        {p.usesGpu && ", uses GPU"}, {p.phase}
-                        {p.note && `. ${p.note}`}
-                      </span>
-                    </span>
-                    {p.quarantined ? <span className="chip t-contained">Quarantined</span> : <HealthChip health={p.health} />}
-                  </li>
-                ))}
-              </ul>
+              <>
+                <div className="panel-head">
+                  <h2>Pods on this node</h2>
+                  <span className="aside">{nodePods.length}</span>
+                </div>
+                {nodePods.length === 0 ? (
+                  <div className="empty">No pods reported on this node.</div>
+                ) : (
+                  podRows(nodePods)
+                )}
+              </>
             )}
             {related.length > 0 && (
               <>

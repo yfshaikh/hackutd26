@@ -20,6 +20,8 @@ import type {
   IncidentRecord,
   IncidentRecordPatch,
   NewUser,
+  PodDetail,
+  PodLogs,
   Role,
   RoleInfo,
   ServerEvent,
@@ -91,6 +93,33 @@ export const logout = () => post<void>("/auth/logout");
 
 export const getSnapshot = () => request<Snapshot>("/snapshot");
 
+// ---- Pod inspection (floor drawer) ---------------------------------------
+
+export interface PodLogOptions {
+  container?: string;
+  tailLines?: number;
+  previous?: boolean;
+  timestamps?: boolean;
+}
+
+export const getPodDetail = (namespace: string, name: string) =>
+  request<PodDetail>(`/cluster/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+
+export const getPodLogs = (namespace: string, name: string, opts: PodLogOptions = {}) => {
+  const q = new URLSearchParams();
+  if (opts.container) q.set("container", opts.container);
+  if (opts.tailLines) q.set("tailLines", String(opts.tailLines));
+  if (opts.previous) q.set("previous", "true");
+  if (opts.timestamps) q.set("timestamps", "true");
+  const query = q.toString();
+  const suffix = query ? `?${query}` : "";
+  return request<PodLogs>(
+    `/cluster/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/logs${suffix}`,
+  );
+};
+
+export const getAgentSpecs = () => request<import("./types").AgentSpec[]>("/defender/agents");
+export const getRunbooks = () => request<{ id: string; body: string }[]>("/defender/runbooks");
 export const getMetrics = () => request<import("./types").DefenderMetrics>("/defender/metrics");
 
 export const approve = (id: string) =>

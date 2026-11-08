@@ -169,6 +169,7 @@ class Store:
         transcript: list[dict] | None = None,
         agent: str | None = None,
         trace_only: bool = False,
+        hypothesis: dict | None = None,
     ) -> TimelineEntry:
         entry = TimelineEntry(
             id=f"tl-{uuid.uuid4().hex[:10]}",
@@ -187,6 +188,7 @@ class Store:
             reasoning=reasoning,
             podLogs=pod_logs,
             transcript=transcript,
+            hypothesis=hypothesis,
         )
         self.timeline.append(entry)
         self.publish({"type": "timeline", "entry": entry.model_dump(exclude_none=True)})

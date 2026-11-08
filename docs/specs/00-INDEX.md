@@ -39,3 +39,17 @@ After each lane lands, Claude will: read the diff for the invariants above, run 
 run the backend self-checks, and **re-run the end-to-end attack stress test** (gain-access → miner / exfil /
 persistence / ddos against the live cluster, watching the console converge) to confirm no convergence or
 idempotency regressions — the same test that validated the current state.
+
+---
+
+## Round 2 — three parallel lanes (Nov 8)
+
+| # | Spec | Files it may touch | Lane |
+|---|------|--------------------|------|
+| 08 | [Classification + runbooks](08-classification-and-runbooks.md) — signature table, hypothesis vocabulary, runbook-first Advisor | `backend/app/defender.py` (prompts + 1 context line), `backend/runbooks/*.md` | **F** |
+| 09 | [Loot + victim visualization](09-loot-and-victim-visualization.md) — watch exfil + DDoS live in the attacker app | `deploy/10,20`, `attacks/bodies.py`, NEW `routes_loot.py` (+1 line `main.py`), NEW `attacker/src/LootPanel.tsx` | **G** |
+| 10 | [Stakeholder briefing](10-stakeholder-briefing.md) — plain-English page + war room for the law firm | `console/src/` only (new `Briefing.tsx`, `plain.ts`; `Chat`, `CommandCenter`, `App`, `TopBar`, appended CSS) | **H** |
+
+No file is shared between F, G and H, so all three run at once. Before starting, commit (or at least stash-check) the
+current working tree so each lane's diff is reviewable on its own — today it holds ~30 uncommitted files from earlier work.
+Spec 08 is the only one that needs live agent runs (2–3 min each); 09 and 10 can be checked in the browser without them.

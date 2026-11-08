@@ -25,6 +25,8 @@ Base URL: `VITE_API_URL`, default `http://localhost:8000`.
 | POST | `/auth/logout` | | 204 | signed in |
 | GET | `/snapshot` | | `Snapshot` | signed in |
 | GET | `/events` | | SSE stream of `ServerEvent` (below) | signed in |
+| GET | `/cluster/pods/{namespace}/{name}` | | `PodDetail` | signed in |
+| GET | `/cluster/pods/{namespace}/{name}/logs` | query: `container?`, `tailLines?` (1–1000), `previous?`, `timestamps?` | `PodLogs` | signed in |
 | POST | `/approvals/{id}/approve` | | updated `Approval` | admin, responder, approver |
 | POST | `/approvals/{id}/deny` | | updated `Approval` | admin, responder, approver |
 | POST | `/messages` | `{text}` | the new `TimelineEntry` (kind `human`, actor = user's name) | admin, responder, operator |
@@ -71,6 +73,12 @@ data: {"type":"timeline","entry":{...TimelineEntry}}
 
 ## Notes on fields that drive the UI
 
+- `PodDetail` (floor drawer): `summary` is one or two plain-language sentences describing what the pod
+  does, built server-side from its app label, annotations, command and image (no model call). `containers`
+  carries the live spec; `env` lists variable **names only** because values can be credentials.
+  `workload` resolves a Pod -> ReplicaSet -> Deployment chain so the UI can name the deployed workload.
+  `PodLogs` defaults to the first container; a container that has not started returns 409 with the API
+  server's explanation. These routes are restricted to the namespaces already shown on the floor.
 - `TimelineEntry.autonomy`: set on every agent action. `{mode: "autonomous", reason}` or
   `{mode: "needs-approval", reason, approvalId}`. `reason` is shown verbatim, e.g. "reversible, affects attacker only".
 - `TimelineEntry.target`: node or pod name the event touched. The 3D floor flashes that rack on `kind: "attack"` entries.

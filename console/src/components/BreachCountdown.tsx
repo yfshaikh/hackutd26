@@ -31,7 +31,7 @@ export function BreachCountdown({
   if (list.length === 0) {
     return (
       <p className="deadline-empty">
-        No breach-notification deadline set. Add one in the record editor when client data leaves.
+        No clock running: no client data has left the cluster.
       </p>
     );
   }

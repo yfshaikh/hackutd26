@@ -506,30 +506,47 @@ def _delete_attack_objects() -> list[str]:
     opts = client.V1DeleteOptions(grace_period_seconds=0, propagation_policy="Background")
     core, batch, net = admin_core(), admin_batch(), admin_net()
     try:
-        for cj in batch.list_namespaced_cron_job(config.LAWFIRM_NS, label_selector=sel).items:
+        cronjobs = batch.list_namespaced_cron_job(config.LAWFIRM_NS, label_selector=sel).items
+    except ApiException:
+        cronjobs = []
+    for cj in cronjobs:
+        try:
             batch.delete_namespaced_cron_job(cj.metadata.name, config.LAWFIRM_NS, body=opts)
             done.append(f"cronjob/{cj.metadata.name}")
-    except ApiException:
-        pass
+        except ApiException:
+            continue  # one already-gone object must not strand the rest
     try:
-        for job in batch.list_namespaced_job(config.LAWFIRM_NS, label_selector=sel).items:
+        jobs = batch.list_namespaced_job(config.LAWFIRM_NS, label_selector=sel).items
+    except ApiException:
+        jobs = []
+    for job in jobs:
+        try:
             batch.delete_namespaced_job(job.metadata.name, config.LAWFIRM_NS, body=opts)
             done.append(f"job/{job.metadata.name}")
-    except ApiException:
-        pass
+        except ApiException:
+            continue
     try:
-        for p in core.list_namespaced_pod(config.LAWFIRM_NS, label_selector=sel).items:
+        pods = core.list_namespaced_pod(config.LAWFIRM_NS, label_selector=sel).items
+    except ApiException:
+        pods = []
+    for p in pods:
+        try:
             core.delete_namespaced_pod(p.metadata.name, config.LAWFIRM_NS, body=opts)
             done.append(f"pod/{p.metadata.name}")
-    except ApiException:
-        pass
+        except ApiException:
+            continue
     try:
-        for np in net.list_namespaced_network_policy(config.LAWFIRM_NS).items:
-            if np.metadata.name.startswith("quarantine-"):
-                net.delete_namespaced_network_policy(np.metadata.name, config.LAWFIRM_NS, body=opts)
-                done.append(f"networkpolicy/{np.metadata.name}")
+        netpols = net.list_namespaced_network_policy(config.LAWFIRM_NS).items
     except ApiException:
-        pass
+        netpols = []
+    for np in netpols:
+        if not np.metadata.name.startswith("quarantine-"):
+            continue
+        try:
+            net.delete_namespaced_network_policy(np.metadata.name, config.LAWFIRM_NS, body=opts)
+            done.append(f"networkpolicy/{np.metadata.name}")
+        except ApiException:
+            continue
     return done
 
 

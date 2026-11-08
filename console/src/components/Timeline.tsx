@@ -5,6 +5,7 @@ import { clock } from "../format";
 import { SEVERITY } from "../labels";
 import type { TimelineEntry } from "../types";
 import { NoData } from "./Empty";
+import { VerdictChip } from "./Status";
 
 /** Transcript-line colouring mirrors the attacker terminal: note=why, http=call, etc. */
 const TX_LABEL: Record<string, string> = {
@@ -69,7 +70,7 @@ function Entry({ e }: { e: TimelineEntry }) {
   const agent = AGENT_BY_ID[agentOf(e)];
   const sev = e.severity && e.severity !== "info" ? SEVERITY[e.severity] : null;
   return (
-    <li className={`entry k-${e.kind}${open ? " open" : ""}`}>
+    <li className={`entry k-${e.kind}${e.hypothesis ? " is-hyp" : ""}${open ? " open" : ""}`}>
       <button className="entry-row" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <time dateTime={e.ts}>{clock(e.ts)}</time>
         <span className={`entry-avatar t-${agent.tone}`} aria-hidden>
@@ -79,6 +80,7 @@ function Entry({ e }: { e: TimelineEntry }) {
           <span className="who">{agent.id === "executor" ? "Executor" : e.actor}</span>
           <span className="text">{e.text}</span>
         </span>
+        {e.hypothesis && <VerdictChip verdict={e.hypothesis.verdict} />}
         {a?.mode === "needs-approval" && agent.id !== "executor" && <span className="chip mode-ask">Asked approval</span>}
         {sev && <span className={`sev-dot t-${sev.tone}`} title={`${sev.label} severity`}><span className="sr-only">{sev.label}</span></span>}
         <span className="chev" aria-hidden />

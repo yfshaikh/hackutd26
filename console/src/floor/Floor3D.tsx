@@ -132,7 +132,7 @@ function build(cluster: Cluster): Built {
       });
       const sled = new THREE.Mesh(new THREE.BoxGeometry(RACK_W * 0.82, 0.07, 0.03), mat);
       sled.position.set(0, y, RACK_D / 2 + 0.016);
-      sled.userData = { node: node.name } satisfies Selection;
+      sled.userData = { node: node.name, namespace: p.namespace, pod: p.name } satisfies Selection;
       rack.add(sled);
       if (hostile) pulses.push({ mat, base: 0.6 });
       if (p.quarantined) {
