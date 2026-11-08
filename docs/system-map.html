@@ -160,6 +160,11 @@ details > div { padding: 0 16px 16px; }
     </div>
   </section>
 
+  <details open>
+    <summary>Questions &amp; answers</summary>
+    <div class="cols" id="qa"></div>
+  </details>
+
   <details>
     <summary>How your Mac reaches the box</summary>
     <div>
@@ -476,6 +481,18 @@ document.querySelectorAll("#strip button").forEach(b => b.addEventListener("clic
 }));
 $("#back").addEventListener("click", () => { view = "box"; render(); });
 render();
+
+// ---------- secondary: questions & answers ----------
+const QA = [
+  ["What does the attacker actually do?", "Four real steps, in order: (1) it breaks into the exposed Jupyter notebook and steals the Kubernetes access token sitting inside it; (2) it starts fake 'mining' that pins the GPU at 100%; (3) it copies the law firm's AI model (about 288 MiB) out to a drop server; (4) it plants a scheduled job so it comes back after cleanup. Every action is real, on our own box. The 'miner' is just GPU math in a loop, never real mining software."],
+  ["What is /attack/stream?", "Not something the attacker does. It is the live play-by-play. As each real step runs, the backend writes a line of commentary ('sent code to the notebook', 'token stolen', 'copied 288 MiB'), and /attack/stream is the feed of those lines. The attacker laptop and the defender console both watch the feed. The attack is the real actions; /attack/stream is just the narration of them."],
+  ["What is the Winstead 'later' column?", "The second tier of the law-firm incident dashboard: the parts we built a basic version of and saved the polish for. Surviving a fully compromised cluster, person-to-person chat, full NIST 800-61 record fields with PDF export, breach-notification deadline countdowns, and user roles. The 'full Winstead' build finishes these."],
+  ["How does the agent spot the attack?", "Two layers. First, fixed rules (no AI) check every few seconds for a pod with no owner label, a GPU spike nothing explains, a pod touching the model weights it should not, or a strange scheduled job. When a rule fires, Nemotron investigates with read-only tools and proposes what to do. The rules raise the alarm; the AI does the thinking and the response."],
+  ["Preventative vs runtime security?", "Preventative is locking the doors before anything happens: no public ports, least-privilege access, real passwords. Runtime is watching what happens while the system runs and reacting: spotting the miner, revoking the stolen token. Our demo shows a preventative gap (an open notebook) being exploited, then runtime defense catching it."],
+  ["Kill vs isolate a pod?", "Killing deletes the pod. It is fast, but you lose the evidence and it may just restart. Isolating cuts its network with a policy so it cannot phone home or spread, while it stays up for investigation. We prefer isolate-then-decide, and anything that touches the customer's real work needs a human's approval."],
+  ["Why would a real GPU server be left exposed?", "Almost never on purpose. Usually it is a default: a tool like Jupyter or Ray ships listening on every address with no password, or someone opens a port 'just to test' and forgets. Attackers simply scan the internet for these. That open-notebook hole is exactly the way in for our demo."],
+];
+$("#qa").innerHTML = QA.map(([q, a]) => `<div><h3>${esc(q)}</h3><p>${esc(a)}</p></div>`).join("");
 
 // ---------- secondary: real-world cases ----------
 const REAL = [
