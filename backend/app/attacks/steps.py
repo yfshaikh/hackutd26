@@ -113,7 +113,10 @@ def gain_access() -> AttackResult:
         pass
 
     store.set_attack_status("gain-access", "done")
-    store.set_attack_status("start-miner", "ready")  # unlock the next step
+    # Access is the only gate. Once the token is stolen, every follow-on attack becomes
+    # available, to run in any order the operator picks (no forced miner->weights->… chain).
+    for nxt in ("start-miner", "steal-weights", "persistence", "ddos"):
+        store.set_attack_status(nxt, "ready")
     store.publish_attack()
     store.add_timeline(
         kind="attack", actor="Attacker",
@@ -160,8 +163,7 @@ def start_miner() -> AttackResult:
         return _refuse("start-miner", f"API server rejected the miner pod: {out.strip()[:200]}")
     _created["miner_pod"] = name
 
-    store.set_attack_status("start-miner", "done")
-    store.set_attack_status("steal-weights", "ready")
+    store.set_attack_status("start-miner", "done")  # others stay available; no chain
     store.publish_attack()
     store.add_timeline(
         kind="attack", actor="Attacker",
@@ -221,8 +223,7 @@ def steal_weights() -> AttackResult:
         return _refuse("steal-weights", f"API server rejected the exfil pod: {out.strip()[:200]}")
     _created["exfil_pod"] = name
 
-    store.set_attack_status("steal-weights", "done")
-    store.set_attack_status("persistence", "ready")
+    store.set_attack_status("steal-weights", "done")  # others stay available; no chain
     store.publish_attack()
 
     # Wait for the upload pod to finish, then read the REAL byte count out of its logs
@@ -295,8 +296,7 @@ def persistence() -> AttackResult:
         return _refuse("persistence", f"API server rejected the CronJob: {out.strip()[:200]}")
     _created["cronjob"] = name
 
-    store.set_attack_status("persistence", "done")
-    store.set_attack_status("ddos", "ready")
+    store.set_attack_status("persistence", "done")  # others stay available; no chain
     store.publish_attack()
     store.add_timeline(
         kind="attack", actor="Attacker",

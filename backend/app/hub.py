@@ -36,11 +36,11 @@ GPU_HISTORY_LEN = 90  # ~3 min at one sample / 2 s
 
 
 # --- Attack step state machine --------------------------------------------
-# The five steps form a chain: only "gain-access" starts "ready"; the rest are
-# "locked". Running a step flips the next one to "ready" (see attacks.py, which
-# calls store.set_attack_status(next, "ready")). The UI greys out locked steps,
-# so the attacker must walk the chain in order: access -> miner -> weights ->
-# persistence -> ddos.
+# Access is the one gate. Only "gain-access" starts "ready"; the rest are "locked".
+# Running gain-access flips ALL four follow-on attacks to "ready" at once (see
+# attacks/steps.py), so the operator then picks any of miner / weights / persistence /
+# ddos, in any order. The UI greys out locked steps, so only "steal the token" is
+# available until it succeeds.
 def _default_attack_steps() -> list[AttackStep]:
     return [
         AttackStep(

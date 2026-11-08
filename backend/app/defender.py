@@ -754,11 +754,23 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
             store.add_timeline(kind="agent", actor=name, agent=role, text=final, severity="info")
             break
         for tc in tool_calls:
+            name = tc.function.name
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = _dispatch(tc.function.name, args)
+            # Enforce the per-agent tool scope in CODE, not just by what we offered the
+            # model: a prompt-injected or confused agent (e.g. Triage) cannot reach another
+            # stage's mutating tools. This is the pipeline analogue of classify() — the model
+            # proposes, the backend decides. Without it, `allowed` would be advisory only.
+            if name not in allowed:
+                result = f"error: tool '{name}' is not permitted for the {role} agent"
+                store.add_timeline(
+                    kind="system", actor="System", agent=role, severity="medium",
+                    text=f"Blocked {name}() — outside the {role} agent's tool scope.",
+                )
+            else:
+                result = _dispatch(name, args)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result[:2000]})
     else:
         store.add_timeline(kind="agent", actor=name, agent=role,
