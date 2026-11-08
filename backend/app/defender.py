@@ -631,6 +631,13 @@ def _tool_schemas() -> list[dict]:
             }}},
             ["fields"],
         ),
+        fn(
+            "consult_investigator",
+            "Ask the Investigator agent a direct follow-up question (they re-check the live cluster "
+            "read-only and answer). Use when you need a detail their handoff did not cover before you act.",
+            {"question": {"type": "string"}},
+            ["question"],
+        ),
     ]
 
 
@@ -647,7 +654,7 @@ _SCENARIO = (
 # ONLY the Advisor gets the mutating tools, so the approve/executor gate lives in one place.
 _TRIAGE_TOOLS = READ_TOOLS | {"update_incident_record"}
 _INVESTIGATOR_TOOLS = READ_TOOLS | {"update_scope"}
-_ADVISOR_TOOLS = set(_RAW)  # everything
+_ADVISOR_TOOLS = set(_RAW) | {"consult_investigator"}  # every cluster tool + the two-way consult
 
 TRIAGE_PROMPT = _SCENARIO + (
     "You are TRIAGE, the first responder. Size up the incident fast with the read tools, then set "
@@ -669,10 +676,19 @@ INVESTIGATOR_PROMPT = _SCENARIO + (
     "root cause, and the containment actions needed in priority order. Be terse."
 )
 
+# Used when the Advisor asks the Investigator a mid-response follow-up (the two-way exchange).
+CONSULT_PROMPT = _SCENARIO + (
+    "You are the INVESTIGATOR. The Advisor has paused to ask you a direct follow-up question. "
+    "Check the live cluster with the read tools, then answer in 1-3 sentences. Do not contain "
+    "anything and do not hand off — just answer the question you were asked."
+)
+
 ADVISOR_PROMPT = _SCENARIO + (
     "You are the ADVISOR, the containment lead. Triage has classified the incident and the "
     "Investigator has mapped the scope (both are in your context). Propose and execute the ranked "
-    "remediation now.\n\n"
+    "remediation now. If you need a detail the Investigator did not cover — does a pod still exist, "
+    "what is in its logs, is the miner really gone — call consult_investigator(question) to ask them "
+    "directly; their answer comes back to you before you act.\n\n"
     "AUTONOMY POLICY (the backend enforces this; respect it): you may act autonomously to delete "
     "UNKNOWN pods (no owner label), quarantine pods, and delete non-allowlisted cronjobs. Actions "
     "that touch legitimate work — revoke_service_account, cordon_node, or deleting an OWNED pod — "
@@ -705,6 +721,26 @@ def _handoff(frm: str, to: str, summary: str) -> None:
         text=f"Handing off to {_AGENT_NAME[to].split(' ')[0]}.",
         reasoning=summary or None,
     )
+
+
+def _consult(oai, question: str) -> str:
+    """The Advisor asks the Investigator a follow-up — a real two-way exchange, logged both
+    directions. Runs a short read-only Investigator query and returns its answer to the Advisor.
+    _run_role logs the Investigator's reads + answer under agent=investigator; we add the
+    Advisor's question before it so the back-and-forth reads clearly in the timeline."""
+    global _current_agent
+    store.add_timeline(
+        kind="agent", actor=_AGENT_NAME[ADVISOR], agent=ADVISOR, severity="info",
+        text=f"Asks the Investigator: {question}",
+    )
+    saved = _current_agent
+    answer = _run_role(
+        oai, role=INVESTIGATOR, model=config.NEMOTRON_FAST_MODEL, system_prompt=CONSULT_PROMPT,
+        allowed=READ_TOOLS, rounds=4,
+        context=f"The Advisor asks: {question}\n\nCurrent lawfirm pods:\n{_do_list_pods()}\n\nAnswer concisely.",
+    )
+    _current_agent = saved  # back to the Advisor, which is still mid-loop
+    return answer or "(the Investigator found nothing further)"
 
 
 def _run_role(oai, *, role: str, model: str, system_prompt: str,
@@ -754,7 +790,7 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
             store.add_timeline(kind="agent", actor=name, agent=role, text=final, severity="info")
             break
         for tc in tool_calls:
-            name = tc.function.name
+            fname = tc.function.name
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
@@ -763,14 +799,17 @@ def _run_role(oai, *, role: str, model: str, system_prompt: str,
             # model: a prompt-injected or confused agent (e.g. Triage) cannot reach another
             # stage's mutating tools. This is the pipeline analogue of classify() — the model
             # proposes, the backend decides. Without it, `allowed` would be advisory only.
-            if name not in allowed:
-                result = f"error: tool '{name}' is not permitted for the {role} agent"
+            if fname == "consult_investigator" and fname in allowed:
+                # The Advisor asks the Investigator a follow-up — a real two-way exchange.
+                result = _consult(oai, (args.get("question") or "").strip() or "What should I double-check?")
+            elif fname not in allowed:
+                result = f"error: tool '{fname}' is not permitted for the {role} agent"
                 store.add_timeline(
                     kind="system", actor="System", agent=role, severity="medium",
-                    text=f"Blocked {name}() — outside the {role} agent's tool scope.",
+                    text=f"Blocked {fname}() — outside the {role} agent's tool scope.",
                 )
             else:
-                result = _dispatch(name, args)
+                result = _dispatch(fname, args)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result[:2000]})
     else:
         store.add_timeline(kind="agent", actor=name, agent=role,
