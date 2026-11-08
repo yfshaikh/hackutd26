@@ -25,6 +25,10 @@ spec:
   template:
     metadata: {labels: {app: notebook-edge, owner: platform}}
     spec:
+      # Normally a Pod gets its own private network. hostNetwork: true instead puts this Pod
+      # directly on the node's network, so it can bind the box's real Tailscale address. socat
+      # is a tiny relay: "listen on 100.106.83.89:8888, forward every connection to the notebook
+      # Service". That's what makes the in-cluster notebook reachable from the tailnet.
       hostNetwork: true                       # bind directly on the node's interfaces
       dnsPolicy: ClusterFirstWithHostNet      # still resolve *.svc.cluster.local
       nodeName: brev-bsn9u97vq                # pin to the node that owns 100.106.83.89

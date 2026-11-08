@@ -2,6 +2,19 @@
 
 Passwords are hashed with stdlib hashlib.scrypt. Roles are enforced server
 side by the dependencies in main.py. In-memory is fine for the MVP.
+
+In plain terms (how login works here):
+  1. You POST your email + password to /auth/login.
+  2. We don't store your raw password — we store a one-way "hash" of it. On login
+     we hash what you typed and compare; if it matches, you're in. (A hash can't be
+     reversed back into the password, so a leaked store still doesn't reveal it.)
+  3. On success we mint a random "session token" and send it back as a browser
+     COOKIE. The browser attaches that cookie to every later request, and that's
+     how the server knows it's still you — no need to resend the password.
+  4. Each user has a ROLE (admin / responder / approver / operator / viewer). Routes
+     check the role before doing anything sensitive. That check lives HERE on the
+     server, not in the frontend — the UI can hide a button, but only the server can
+     actually refuse the action.
 """
 from __future__ import annotations
 
@@ -22,7 +35,14 @@ _SCRYPT_R = 8
 _SCRYPT_P = 1
 
 
+# --- Password hashing (stdlib scrypt, no external deps) --------------------
+# scrypt is a deliberately SLOW hash: slow is good here, because it makes
+# guessing passwords by brute force expensive. The "salt" is a random value mixed
+# in per-password so two people with the same password get different hashes, which
+# defeats precomputed "rainbow table" attacks.
 def _hash_password(password: str, salt: bytes | None = None) -> str:
+    # Stored as "salt_hex$derivedkey_hex" so the salt travels with the hash and
+    # _verify_password can re-derive with the same salt. New salt per password.
     salt = salt or os.urandom(16)
     dk = hashlib.scrypt(
         password.encode(), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32
@@ -46,11 +66,16 @@ class _Record:
         self.pw_hash = pw_hash
 
 
+# --- User + session store (in-memory) --------------------------------------
 class AuthStore:
+    """Users, their password hashes, and live session tokens — all in memory, so a
+    restart clears them (fine for the demo). The seeded admin logs in with the
+    configured credentials; users created via /users get a throwaway password."""
+
     def __init__(self) -> None:
         self.users: dict[str, _Record] = {}          # user id -> record
         self.by_email: dict[str, str] = {}            # email -> user id
-        self.sessions: dict[str, str] = {}            # token -> user id
+        self.sessions: dict[str, str] = {}            # session token -> user id
 
     def seed_admin(self) -> None:
         if self.by_email:
@@ -112,6 +137,10 @@ class AuthStore:
 auth = AuthStore()
 
 
+# --- FastAPI dependencies: the server-side auth/role gate ------------------
+# Routes declare `user = Depends(current_user)` to require a session, or
+# `Depends(require_roles("admin", ...))` to require a role. This is where access
+# control is enforced — never in the frontend.
 def current_user(cc_session: str | None = Cookie(default=None)) -> User:
     user = auth.user_for_token(cc_session)
     if not user:

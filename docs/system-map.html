@@ -166,6 +166,24 @@ details > div { padding: 0 16px 16px; }
   </details>
 
   <details>
+    <summary>Read the backend in this order</summary>
+    <div>
+      <p>To understand how it works, read these top to bottom. Every backend file now opens with a comment on what it is; the two big ones (<code>attacks.py</code>, <code>defender.py</code>) start with a "reading map" of their own sections.</p>
+      <ol>
+        <li><code>backend/app/main.py</code> — the entrypoint: every route plus the two background loops (telemetry every 2&nbsp;s, detection every 4&nbsp;s).</li>
+        <li><code>backend/app/config.py</code> — the knobs and names in one place.</li>
+        <li><code>backend/app/hub.py</code> — the Store: the single in-memory source of truth the whole app reads and writes.</li>
+        <li><code>backend/app/k8s.py</code> — the three cluster identities (admin, read-only agent, executor) and how their tokens are minted.</li>
+        <li><code>backend/app/attacks.py</code> — the five attack steps: what the attacker actually does, over the stolen token.</li>
+        <li><code>backend/app/defender.py</code> — the defender: detection → policy → tools → agent → metrics (see its reading map).</li>
+        <li><code>backend/app/routes_defender.py</code> &amp; <code>routes_incident.py</code> — the metrics/evals and dashboard APIs.</li>
+        <li><code>backend/evals/</code> — the eval suite: scenarios → runner → scoring → report.</li>
+        <li><code>deploy/*.yaml</code> — the cluster itself: law-firm workloads, GPU plugin, agent RBAC, DDoS sink.</li>
+      </ol>
+    </div>
+  </details>
+
+  <details>
     <summary>How your Mac reaches the box</summary>
     <div>
       <p>Your Mac and the box are both on your Tailscale network, a private encrypted link. The box's address there is <code>100.106.83.89</code>. Nothing on the box is open to the public internet.</p>
@@ -493,6 +511,7 @@ const QA = [
   ["Why would a real GPU server be left exposed?", "Almost never on purpose. Usually it is a default: a tool like Jupyter or Ray ships listening on every address with no password, or someone opens a port 'just to test' and forgets. Attackers simply scan the internet for these. That open-notebook hole is exactly the way in for our demo."],
   ["What is a service account (SA)?", "A login for software instead of a person. It is the identity a program uses to talk to Kubernetes (the system that runs all the pods), and it carries a token — a password-like key. The attacker's very first move is stealing the notebook pod's service-account token, because that token is the keys to the cluster. In our defender the agent is given a read-only service account, so even if the agent itself were hijacked it can only look, never change anything; a separate, more powerful account runs the fixes a human has approved."],
   ["Where do the agents work together (the multi-agent part)?", "In the defender (workstream A). It is not one agent doing everything — it is a few separate roles handing work to each other: the detection layer raises the alarm, an investigator agent looks into it with read-only tools and writes a ranked plan, a human approves, and a separate executor carries the approved action out. That hand-off chain is the 'agents working together' story, and it is what the NVIDIA track is looking for."],
+  ["What does `kubectl apply -f deploy/20-ddos-sink.yaml` do?", "It sends the objects in that one file to the cluster on the Brev box (your Mac reaches the box's cluster over Tailscale using ~/.kube/hackutd.yaml). That file creates a small 'sink': a pod that accepts and immediately closes connections, with a ClusterIP service in front of it. It is the in-cluster target the simulated DDoS step floods, so nothing has to leave the box. 'apply' only touches what is in that one file — not every deployment — and it is safe to run again; it just reconciles what is already there."],
 ];
 $("#qa").innerHTML = QA.map(([q, a]) => `<div><h3>${esc(q)}</h3><p>${esc(a)}</p></div>`).join("");
 

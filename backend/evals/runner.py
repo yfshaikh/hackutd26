@@ -104,9 +104,9 @@ def _reset() -> None:
     _delete_eval_pods()
     attacks.reset()
     defender.reset_detection_state()
-    store.record = None
-    store.timeline.clear()
-    cluster.seed_assets()  # scope back to clean
+    store.reset_incident_state()        # clears record, timeline, approvals, assets; relocks steps
+    for a in cluster.seed_assets():     # seed_assets() only RETURNS the list, so upsert each back in
+        store.upsert_asset(a)
     time.sleep(2)  # let deletions settle on the cluster
 
 

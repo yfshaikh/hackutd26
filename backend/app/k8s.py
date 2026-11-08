@@ -1,12 +1,28 @@
-"""Kubernetes access for the command center.
+"""Kubernetes access for the command center — four distinct identities.
 
-Two distinct clients:
-  * admin()    - the backend's own kubeconfig. Used by snapshot + defender tools.
-  * attacker() - built ONLY from the service-account token the attack chain
-                 steals from the notebook pod. Everything the attacker does
-                 goes through this, to prove the RBAC over-grant is the vector.
+  * admin()          - the backend's own kubeconfig (full access). Used for the
+                       snapshot, GPU telemetry and detection (the SIEM-style read path).
+  * attacker()       - built ONLY from the service-account token the attack chain
+                       steals from the notebook pod. Everything the attacker does
+                       goes through this, to prove the RBAC over-grant is the vector.
+  * agent_readonly() - what the defender AGENT investigates with. RBAC denies every
+                       write (deploy/30-agent-rbac.yaml), so a hijacked agent can only look.
+  * executor()       - runs ONLY actions a human/policy approved. Least-privilege:
+                       exactly the five containment verbs, scoped to lawfirm.
 
-We never print tokens or kubeconfig contents.
+agent_readonly/executor tokens are minted in-memory via the TokenRequest API — never
+read from a file, never printed. We never print tokens or kubeconfig contents.
+
+Concepts (new here?):
+  * A kubeconfig is the file (~/.kube/hackutd.yaml) holding the cluster's address plus a
+    credential — a saved login for talking to the Kubernetes API server. admin() uses it.
+  * A ServiceAccount is an identity for software, not a person. Kubernetes auto-mounts its
+    token (a bearer credential) into every pod at /var/run/secrets/.../token; whoever holds
+    that token can call the API as that identity. The attacker stealing the notebook pod's
+    token IS the breach — that's why identities and their RBAC (what each is allowed to do)
+    are the whole story here.
+  * An ApiClient is just a configured HTTP client for the Kubernetes API; each identity above
+    is one ApiClient built with a different credential.
 """
 from __future__ import annotations
 

@@ -8,6 +8,10 @@
 #   gpu-telemetry a platform pod the command center execs nvidia-smi in
 #
 # Apply: kubectl apply -f deploy/10-lawfirm.yaml
+#
+# A Namespace is a folder that groups resources and gives them a scope. We use the
+# `owner` label as a trust signal: every legitimate workload is labelled owner=law-firm,
+# so the defender treats any pod WITHOUT that label as suspicious.
 apiVersion: v1
 kind: Namespace
 metadata: {name: lawfirm, labels: {owner: law-firm}}
@@ -16,6 +20,10 @@ apiVersion: v1
 kind: Namespace
 metadata: {name: platform, labels: {owner: platform}}
 ---
+# A PersistentVolumeClaim (PVC) asks the cluster for a chunk of disk that survives pod
+# restarts (a pod's own filesystem is wiped when it dies; a PVC is not). This one holds
+# the firm's crown jewels — the model weights — and is what the attacker's exfil pod steals.
+# accessModes ReadWriteOnce = one node mounts it read-write at a time.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: {name: model-weights, namespace: lawfirm, labels: {asset: model-weights}}
@@ -24,10 +32,15 @@ spec:
   storageClassName: local-path        # k3s's built-in storage: a directory on the node's disk
   resources: {requests: {storage: 2Gi}}
 ---
+# A ConfigMap's `data:` is a map of name -> text. Here each key is a filename and the value
+# is a whole Python script; the pods below mount this ConfigMap as a folder (/scripts) and run
+# those files. So the firm's two workloads' SOURCE CODE lives here, not baked into an image.
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: workload-scripts, namespace: lawfirm}
 data:
+  # model_server.py: the law firm's product. Builds a ~300 MB transformer model, saves its
+  # weights to the PVC, and serves it on the GPU (steady inference traffic = real clients).
   model_server.py: |
     # Creates the firm's model once (a small transformer, ~300 MB of weights), then serves it on the GPU.
     import os, threading, time, torch, torch.nn as nn
@@ -51,6 +64,8 @@ data:
             self.send_response(200); self.end_headers(); self.wfile.write(b"ok\n")
         def log_message(self, *a): pass
     HTTPServer(("", 8080), H).serve_forever()
+  # train.py: a second GPU workload — an ongoing fine-tuning loop. It's a victim: when the
+  # attacker's miner hogs the GPU, this job visibly slows down.
   train.py: |
     # A small fine-tuning loop on the GPU, paced so it uses part of the card.
     import time, torch, torch.nn as nn
@@ -65,6 +80,12 @@ data:
             print(f"step {step} loss {loss.item():.4f}", flush=True)
         time.sleep(0.05)
 ---
+# A Deployment keeps a set of identical Pods running. model-server: serves the firm's model.
+#   replicas: 1            -> how many copies of the Pod to keep alive.
+#   selector.matchLabels   -> which Pods this Deployment owns (must match template labels below).
+#   template               -> the Pod blueprint stamped out for each replica.
+#   automountServiceAccountToken: false -> don't give this pod a cluster token it doesn't need
+#                             (good hygiene; only the notebook deliberately keeps its token).
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: model-server, namespace: lawfirm, labels: {app: model-server, owner: law-firm}}
@@ -82,7 +103,11 @@ spec:
           image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
           command: ["python", "/scripts/model_server.py"]
           ports: [{containerPort: 8080}]
+          # resources.limits: the ceiling on what the container may use. nvidia.com/gpu: 1
+          # claims one of the 8 GPU time-slices the device plugin advertised.
           resources: {limits: {nvidia.com/gpu: 1}}
+          # volumeMounts says WHERE inside the container each volume appears; `volumes` (below)
+          # says WHAT each one is. Here: the weights PVC at /weights, the scripts ConfigMap at /scripts.
           volumeMounts:
             - {name: weights, mountPath: /weights}
             - {name: scripts, mountPath: /scripts}
@@ -90,6 +115,7 @@ spec:
         - {name: weights, persistentVolumeClaim: {claimName: model-weights}}
         - {name: scripts, configMap: {name: workload-scripts}}
 ---
+# training: an ongoing fine-tuning job sharing the GPU (a victim the miner slows down).
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: training, namespace: lawfirm, labels: {app: training, owner: law-firm}}
@@ -109,7 +135,15 @@ spec:
           volumeMounts: [{name: scripts, mountPath: /scripts}]
       volumes: [{name: scripts, configMap: {name: workload-scripts}}]
 ---
-# The notebook and its over-privileged identity (the vulnerability).
+# --- RBAC: identity + permissions (this trio IS the vulnerability) ----------
+# Kubernetes access control (RBAC) has three parts:
+#   ServiceAccount = an identity for software (a pod), with an auto-issued token.
+#   Role           = a list of allowed actions (verbs) on resources, in ONE namespace.
+#                    (A ClusterRole is the same but cluster-wide — see 30-agent-rbac.yaml.)
+#   RoleBinding    = "give this Role to this ServiceAccount". Permissions only exist once bound.
+# A real intruder who steals the pod's token inherits exactly whatever its Role allows.
+
+# The notebook's identity. Its token gets mounted into the notebook pod (serviceAccountName below).
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: notebook, namespace: lawfirm}
@@ -118,8 +152,10 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: {name: notebook-dev, namespace: lawfirm}
 rules:
-  # "So the notebook can launch experiments." Far too broad: anyone holding this token can start
-  # arbitrary pods (including ones that mount the model-weights volume) and schedule cronjobs.
+  # Each rule = (apiGroups, resources, verbs). "" is the core API group (pods, etc.); "batch"
+  # holds cronjobs/jobs. "So the notebook can launch experiments." Far too broad: anyone holding
+  # this token can CREATE arbitrary pods (including ones that mount the model-weights volume) and
+  # schedule cronjobs — which is the entire attack chain.
   - apiGroups: [""]
     resources: [pods, pods/log]
     verbs: [get, list, create, delete]
@@ -127,6 +163,8 @@ rules:
     resources: [cronjobs, jobs]
     verbs: [get, list, create, delete]
 ---
+# Binds the over-broad Role above to the notebook ServiceAccount. Deleting THIS binding is how
+# the defender's "revoke the stolen identity" action shuts the attacker out.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: {name: notebook-dev, namespace: lawfirm}
@@ -168,7 +206,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 60               # allow up to ~5 min for the first pip install
 ---
-# ClusterIP for the notebook so the edge proxy can reach it by DNS.
+# A Service is a stable name + virtual IP that forwards to whichever Pods match its `selector`
+# (here app=notebook). Pods come and go with new IPs; the Service name (notebook.lawfirm.svc)
+# stays constant, so other things reach the notebook by DNS instead of a changing pod IP.
 apiVersion: v1
 kind: Service
 metadata: {name: notebook, namespace: lawfirm, labels: {app: notebook, owner: law-firm}}
@@ -202,6 +242,9 @@ apiVersion: v1
 kind: ConfigMap
 metadata: {name: drop, namespace: drop-site}
 data:
+  # drop.py: the attacker's "server on the internet". An HTTP server that accepts a PUT and
+  # writes the body to /loot, logging "received <file> <N> bytes". That log line is the proof
+  # the defender reads to confirm how many bytes of model weights were stolen.
   drop.py: |
     import os
     from http.server import BaseHTTPRequestHandler, HTTPServer

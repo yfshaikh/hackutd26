@@ -23,6 +23,13 @@ Append-only, newest on top.
   ordered decision-tool sequence; reported in `summary.reproducibility`.
 
 ## Changelog
+- (2026-11-07) Bugfix (caught in annotation review): `runner._reset()` called
+  `cluster.seed_assets()` expecting it to seed the store, but that only RETURNS the list.
+  Combined with `store.reset_incident_state()` emptying assets, eval scope wouldn't reset
+  between runs (correct_scope would always fail). Now calls `reset_incident_state()` then
+  upserts each seeded asset. Re-verified green.
+- (2026-11-07) Annotation pass: reading maps/comments across backend + deploy; "Read the
+  backend in this order" added to the System Map artifact (v15). No logic change.
 - (2026-11-07) Added `backend/evals/`: `model.py` (dataclasses), `scenarios.py` (8 scenarios),
   `scoring.py` + `test_scoring.py` (9 metrics, self-test green), `runner.py` (live runner),
   `report.py` (aggregate -> results.json + table), `__main__.py` (CLI), `__init__.py`.

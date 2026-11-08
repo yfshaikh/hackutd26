@@ -1,8 +1,20 @@
 """Build the real cluster view (nodes, pods, GPU) from the live k3s cluster.
 
+This file answers "what's actually running on the box right now?" and packages it into the
+`Cluster` object the console draws as the data-center floor. It also seeds the list of
+"assets" (the things worth protecting: the weights, the training job, the notebook, the node).
+
 Everything here reads the cluster through the admin client. No synthetic data:
 pods, cordon status, and GPU numbers all come from the API server and from
 nvidia-smi run inside the platform telemetry pod.
+
+Concepts (new here?):
+  * nvidia-smi is NVIDIA's command-line tool that reports a GPU's utilization, memory and
+    temperature. We run it inside a pod that has the GPU attached and parse its CSV output.
+  * "Cordon" is a Kubernetes state meaning "don't schedule new pods on this node" (used by
+    the defender to protect a node); you'll see cordon status surfaced to the UI here.
+  * The "owner" label (owner=law-firm) is the trust signal: every legitimate workload carries
+    it, so a pod WITHOUT it is, by definition, something the attacker created.
 """
 from __future__ import annotations
 
@@ -20,6 +32,8 @@ NVIDIA_SMI = [
 ]
 
 
+# --- Pod classification helpers -------------------------------------------
+# These derive the fields the UI and the detector care about from a raw k8s pod.
 def _pod_uses_gpu(pod) -> bool:
     for c in pod.spec.containers or []:
         res = c.resources
@@ -37,6 +51,9 @@ def _pod_mounts_weights(pod) -> bool:
 
 
 def _owner_of(pod) -> str:
+    # The owner label is the core trust signal: every legitimate workload carries
+    # owner=law-firm or owner=platform. A pod with no (or an unknown) owner label is
+    # what the detector flags as an intruder — attacker pods never set it.
     label = (pod.metadata.labels or {}).get("owner")
     if label == "law-firm":
         return "law-firm"
@@ -98,8 +115,14 @@ def list_pods() -> list[Pod]:
     return out
 
 
+# --- Live GPU telemetry ----------------------------------------------------
 def read_gpus() -> tuple[list[Gpu], float]:
-    """Exec nvidia-smi in the telemetry pod. Returns (gpus, total utilization)."""
+    """Exec nvidia-smi in the telemetry pod. Returns (gpus, total utilization).
+
+    The backend runs off-cluster, so it can't see the GPU directly; instead it
+    execs nvidia-smi inside the platform telemetry pod (which has GPU access) and
+    parses the CSV. `total` is the max utilization across GPUs — the miner spike
+    the detector watches for. Real numbers only, never synthetic."""
     pod = first_pod_name(admin(), config.PLATFORM_NS, config.TELEMETRY_LABEL)
     if not pod:
         return [], 0.0
@@ -155,8 +178,12 @@ def build_cluster(gpu_history: list[float], gpus: list[Gpu] | None = None) -> Cl
     return Cluster(name="halloran-vance-gpu", nodes=[node], pods=list_pods(), gpuHistory=gpu_history)
 
 
+# --- Protected assets (scope) ----------------------------------------------
 def seed_assets() -> list[Asset]:
-    """The protected assets, all clean at the start. Refs point at live objects."""
+    """The protected assets, all clean at the start. Refs point at live objects.
+
+    Returns the list; it does NOT write the store. main.py's startup seeds the
+    store from this, and anything resetting scope must upsert these back in."""
     ts = now_iso()
     node_name = ""
     try:

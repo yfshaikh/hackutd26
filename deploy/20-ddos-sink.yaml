@@ -54,11 +54,13 @@ spec:
           volumeMounts: [{name: app, mountPath: /app}]
       volumes: [{name: app, configMap: {name: sink}}]
 ---
-# ClusterIP only: reachable from inside the cluster, never from off-box.
+# Service types decide who can reach it: ClusterIP = in-cluster only (the default);
+# NodePort / LoadBalancer = also reachable from OUTSIDE the box. Using ClusterIP here is the
+# safety guarantee — the simulated flood's target cannot be reached from off the machine.
 apiVersion: v1
 kind: Service
 metadata: {name: sink, namespace: drop-site, labels: {app: sink}}
 spec:
   type: ClusterIP
   selector: {app: sink}
-  ports: [{name: tcp, port: 80, targetPort: 8080}]
+  ports: [{name: tcp, port: 80, targetPort: 8080}]   # port 80 in-cluster -> container's 8080

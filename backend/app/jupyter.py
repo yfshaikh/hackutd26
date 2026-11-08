@@ -9,6 +9,19 @@ mounted service-account token, calling the API server) runs *inside the pod*.
 
 We never print the token itself; callers only surface its length and a short
 hash. HTTP requests are recorded without Authorization headers.
+
+In plain terms (what a "Jupyter kernel" is and how we drive it):
+  - JupyterLab is the notebook app data scientists use in the browser. Behind it,
+    a "kernel" is just a long-running Python process that executes whatever code
+    the notebook sends it and returns the output.
+  - This exposed JupyterLab has NO login, so anyone who can reach it can start a
+    kernel and run code — i.e. run Python inside the notebook's pod. That is the
+    break-in.
+  - Two protocols are used: REST (ordinary HTTP) to CREATE a kernel
+    (POST /api/kernels), then a WEBSOCKET (a persistent two-way connection) to SEND
+    code and RECEIVE results, because execution is streaming/back-and-forth.
+  - run_code() sends one `execute_request` and waits until the kernel both replies
+    (`execute_reply`) and goes back to `idle`, then returns everything it printed.
 """
 from __future__ import annotations
 
@@ -141,6 +154,9 @@ def run_code(kernel_id: str, code: str, emit: Emit | None = None, timeout: float
         parent_id = req["header"]["msg_id"]
         ws.send(json.dumps(req))
         ws.settimeout(timeout)
+        # Jupyter v5.3 sends many messages per execution. We're done only when we've
+        # seen BOTH the execute_reply AND a "status: idle" for our request — output
+        # (stream/execute_result) can still arrive between the reply and idle.
         got_reply = False
         idle = False
         deadline = time.time() + timeout
@@ -152,6 +168,7 @@ def run_code(kernel_id: str, code: str, emit: Emit | None = None, timeout: float
             if not raw:
                 continue
             m = json.loads(raw)
+            # Ignore chatter from other requests/kernels; only our execute_request's children.
             if m.get("parent_header", {}).get("msg_id") != parent_id:
                 continue
             mt = m.get("msg_type") or m.get("header", {}).get("msg_type")

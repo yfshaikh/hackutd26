@@ -2,6 +2,25 @@
 
 Real cluster state in, real attacker/defender actions out. Session-cookie auth,
 server-side role enforcement, SSE live feed.
+
+Layout of this file:
+  * app + CORS + router includes (WS-A metrics, WS-B incident routes)
+  * _telemetry_loop + the startup hook that launches the two background loops
+    (telemetry every ~2 s, defender.detection_loop every ~4 s)
+  * route groups, each under a banner: Auth / Dashboard (snapshot + /events SSE) /
+    Approvals / Messages / Users / Attack panel / Attacker transcript / health
+The defender's own logic lives in defender.py; the attack chain in attacks.py.
+
+In plain terms: this is the web server (built with FastAPI) that both the defender
+console and the attacker app talk to. It does three jobs:
+  1. Serves the API — each `@app.get/post(...)` below is one URL it answers.
+  2. Runs two background loops forever once it starts up: a TELEMETRY loop that reads
+     the GPU + cluster every ~2 s, and defender.detection_loop that checks for the
+     attack every ~4 s and wakes the agent. These run on their own, no request needed.
+  3. Streams live updates to the browser over SSE (the /events feed).
+CORS (the middleware just below) is a browser security rule: a page served from one
+origin can't call a server on another origin unless the server opts in. We opt in for
+exactly the console and attacker app origins so those two pages can reach this API.
 """
 from __future__ import annotations
 
@@ -86,6 +105,8 @@ async def _startup() -> None:
             kind="system", actor="System",
             text=f"Defender online: Nemotron model {config.NEMOTRON_MODEL} ready.", severity="info",
         )
+    # Two long-lived background loops: poll GPU/cluster telemetry, and run the
+    # defender's detect -> escalate cycle. Both are cancelled on shutdown.
     _bg_tasks.append(asyncio.create_task(_telemetry_loop()))
     _bg_tasks.append(asyncio.create_task(defender.detection_loop()))
 

@@ -4,6 +4,29 @@ Detection is pure code (a pod watch / telemetry poll). When it fires, Nemotron
 reasons over the real cluster state and calls real Kubernetes tools. The
 autonomy policy is enforced here, in code, BEFORE every tool call — never left
 to the model. Every action is logged to the timeline and to logs/decisions.jsonl.
+
+READING MAP (sections in order, top to bottom):
+  1. Module state           pending_actions / _handled / _round_reasoning — the
+                            in-memory working set for the incident in flight.
+  2. Decision log           _log_decision -> logs/decisions.jsonl (one line per
+                            tool call). The evals + /defender/metrics read this.
+  3. Incident record        ensure_incident / record_action / _record_merge.
+  4. Autonomy policy        READ_TOOLS, classify() — the heart: decides per call
+                            whether a tool runs autonomously or needs approval.
+  5. Runbook                _RUNBOOK — ranks proposed actions + cites a step.
+  6. Tool executors         _do_* — the REAL Kubernetes calls. Reads go through
+                            the read-only agent identity, writes through the
+                            executor identity (see k8s.py); detection stays admin.
+  7. verify_readonly_identity  startup proof the agent SA cannot write (403).
+  8. Approval + dispatch    run_tool_approved / _dispatch — the gate: needs-approval
+                            actions become pending; autonomous ones run now.
+  9. Nemotron agent         _tool_schemas, SYSTEM_PROMPT, run_agent() — the model
+                            loop; code checks classify() before every call it makes.
+ 10. Detection              _detect / _check_exfil_evidence / detection_tick /
+                            detection_loop — what fires the agent, every 4s.
+ 11. Metrics                metrics() — current-incident outcomes from the log.
+
+The through-line is the NMC pattern: the agent proposes, CODE enforces.
 """
 from __future__ import annotations
 
@@ -106,6 +129,15 @@ def _record_merge(fields: dict) -> None:
 # ---------------------------------------------------------------------------
 # Autonomy policy (enforced in code)
 # ---------------------------------------------------------------------------
+# THE BIG IDEA (for a learner): an AI agent is non-deterministic — you cannot
+# fully trust it to decide, on its own, what it's allowed to do. So we don't ask
+# the model "are you allowed to do this?" We hard-code the rule here in Python and
+# check it BEFORE every action the model requests. The model proposes; this code
+# disposes. That's the single most important safety property in the whole project.
+#
+# READ_TOOLS = safe look-only actions (list/describe pods, read logs, GPU stats).
+# RECORD_TOOLS = updating our own incident paperwork (scope + the NIST record).
+# Neither changes the cluster, so both always run autonomously (no approval).
 READ_TOOLS = {"list_pods", "describe_pod", "get_pod_logs", "gpu_status"}
 RECORD_TOOLS = {"update_scope", "update_incident_record"}
 
@@ -119,7 +151,14 @@ def _pod_owner_label(name: str, namespace: str) -> str | None:
 
 
 def classify(tool: str, args: dict) -> tuple[str, str, str]:
-    """Return (mode, reason, policy_reason). mode in {autonomous, needs-approval}."""
+    """Decide how a single proposed action may run. Returns (mode, reason, policy_reason);
+    mode is "autonomous" (run it now) or "needs-approval" (hold for a human to approve).
+
+    The rule of thumb: the agent may act on its own ONLY when the action is reversible
+    and hits the attacker alone. Anything that could disrupt the law firm's real work —
+    deleting a legitimate pod, revoking the identity real users need, cordoning a node —
+    is held for a human, because a mistake there is the kind that pages you at 3am.
+    """
     if tool in READ_TOOLS or tool in RECORD_TOOLS:
         return "autonomous", "read-only or record update", ""
     if tool == "quarantine_pod":
@@ -160,6 +199,15 @@ def _runbook_for(tool: str) -> dict:
 # ---------------------------------------------------------------------------
 # Raw tool executors (the real Kubernetes actions)
 # ---------------------------------------------------------------------------
+# TWO IDENTITIES (for a learner): in Kubernetes, every request carries an identity
+# whose permissions (RBAC) the cluster enforces. We give this agent TWO of them:
+#   * agent_readonly_core() — can ONLY look (list/read). Used for investigation.
+#   * executor_core()/batch()/net()/rbac() — can change things. Used ONLY after a
+#     human approves (or the policy above cleared the action as attacker-only).
+# So even if the model were tricked into "delete everything", its read-only identity
+# is physically unable to — the cluster itself refuses. Code is one guard, RBAC is
+# the second. (The backend's own monitoring keeps using the admin identity; that's
+# the trusted SIEM, not the agent.)
 def _do_list_pods(namespace: str = config.LAWFIRM_NS) -> str:
     core = agent_readonly_core()  # the agent investigates read-only
     quarantined = quarantine_np_names()
@@ -282,7 +330,13 @@ def _do_cordon_node(name: str) -> str:
 def verify_readonly_identity() -> str:
     """Prove the agent's own identity cannot mutate the cluster: attempt a delete with the
     read-only client and expect a 403 from RBAC. 404 (reached the not-found check) means the
-    identity is NOT read-only — the admin fallback, or an over-broad role. Logged as evidence."""
+    identity is NOT read-only — the admin fallback, or an over-broad role. Logged as evidence.
+
+    For a learner: this is a self-test run once at startup. We deliberately try to delete a
+    pod that doesn't exist. If RBAC is set up right, the cluster rejects it with 403
+    Forbidden *before* even checking whether the pod exists — proving the agent truly can't
+    write. If we instead got 404 Not-Found, it means the delete was allowed through (bad!),
+    so the split isn't actually protecting anything. We log which one happened as evidence."""
     try:
         agent_readonly_core().delete_namespaced_pod(
             "readonly-selfcheck-does-not-exist", config.LAWFIRM_NS,
@@ -568,7 +622,16 @@ def _client():
 
 
 def run_agent(trigger: str) -> None:
-    """Blocking: run the Nemotron tool-calling loop for a detection trigger."""
+    """Run the Nemotron "tool-calling" loop once, in response to a detection trigger.
+
+    How an agent loop works (for a learner): we hand the model (a) a system prompt with
+    its role + the autonomy policy, (b) a list of tools it may call (list_pods, delete_pod,
+    …), and (c) the trigger text. The model replies either with plain text or with a
+    request to call a tool. For each tool it requests, OUR code runs classify() first, then
+    either executes it, or creates an approval and tells the model to wait. We feed the
+    result back and let it reason again, up to a round cap. The model never touches the
+    cluster directly — it only asks, and this function decides. Blocking by design.
+    """
     if not nemotron_configured():
         global _nemotron_announced
         if not _nemotron_announced:
@@ -648,6 +711,13 @@ def run_agent(trigger: str) -> None:
 # ---------------------------------------------------------------------------
 # Deterministic detection
 # ---------------------------------------------------------------------------
+# WHY RULES, NOT AI, FOR DETECTION (for a learner): spotting the attack is pure
+# code — fast, cheap, and runs every 4 seconds. It looks for four tell-tale signs
+# in the REAL cluster state, each of which a normal law-firm workload would never
+# produce: (1) a pod with no owner=law-firm label, (2) a pod other than the model
+# server mounting the weights disk, (3) a GPU pinned at 100% by an unowned pod,
+# (4) a CronJob nobody put on the allowlist. The expensive AI only wakes up AFTER
+# a rule fires — the rules raise the alarm, the agent does the thinking.
 def _detect() -> list[tuple[str, str]]:
     """Return list of (dedupe_key, human trigger) findings from real state."""
     findings: list[tuple[str, str]] = []
@@ -803,7 +873,17 @@ def _parse_ts(s):
 
 def metrics() -> dict:
     """Current-incident metrics, computed from the decision log. Everything is scoped to
-    decisions made since the incident was detected, so stale runs don't inflate it."""
+    decisions made since the incident was detected, so stale runs don't inflate it.
+
+    What the numbers mean (for a learner), all read back from logs/decisions.jsonl:
+      * timeToContainSeconds  — detection -> first containment action. The headline "how
+        fast did we stop it" number.
+      * containmentActions    — how many actions the agent took on its own vs. how many a
+        human approved (shows the autonomy policy actually gating things).
+      * approvals.meanTimeToApproveSeconds — how long the human took to click approve.
+      * gpuHoursSaved         — mining prevented since containment (a rough live estimate).
+    These feed the /defender/metrics endpoint and the console's numbers.
+    """
     rec = store.record
     detected = _parse_ts(rec.detectedAt) if rec and rec.detectedAt else None
     empty = {

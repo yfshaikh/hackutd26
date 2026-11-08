@@ -1,5 +1,14 @@
 """WS-A/WS-C: defender metrics + eval results endpoints. Additive router — one include
-line in main.py."""
+line in main.py.
+
+For a newcomer: an "endpoint" is one URL the backend answers (e.g. GET /defender/metrics).
+A FastAPI "router" is just a small bundle of related endpoints kept in its own file;
+main.py `include_router`s it so the URLs become live. Keeping them here (instead of in
+main.py) is what let this feature be built without touching the rest of the routes.
+  - GET /defender/metrics -> how the agent performed on the CURRENT incident (numbers).
+  - GET /defender/evals   -> the saved results of the eval suite (runs across scenarios).
+Both require a signed-in session (the `Depends(current_user)` below), same as the dashboard.
+"""
 from __future__ import annotations
 
 import json

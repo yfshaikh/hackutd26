@@ -1,7 +1,30 @@
+# ===========================================================================
+# KUBERNETES 101 (read this once; it applies to every file in deploy/)
+#   * The cluster is one Linux box running k3s (a small Kubernetes). You describe
+#     what you WANT in these YAML files and `kubectl apply -f <file>` sends them
+#     to the cluster, which makes them real and keeps them that way.
+#   * A "resource" is one object. `kind:` says what type. The ones you'll see:
+#       Namespace  – a folder that groups resources (lawfirm / platform / drop-site).
+#       Pod        – one or more containers running together (the smallest unit).
+#       Deployment – keeps N identical Pods running (restarts them if they die).
+#       DaemonSet  – runs one Pod on every node (used for node-level agents).
+#       Service    – a stable in-cluster name + IP that load-balances to Pods.
+#       ConfigMap  – config or files stored in the cluster, mounted into Pods.
+#       PersistentVolumeClaim (PVC) – a request for disk that outlives the Pod.
+#       CronJob    – runs a Pod on a schedule (like cron).
+#       ServiceAccount + Role/RoleBinding – an identity for software + what it may do.
+#   * `---` separates multiple resources in one file.
+# ===========================================================================
+#
 # NVIDIA device plugin with GPU time-slicing. It makes the one T4 show up as 8 schedulable
 # nvidia.com/gpu, so the model server, training job and (later) the attacker's miner can all land on it
 # and compete for it, the way a real shared GPU node would.
+# (Time-slicing = the 8 "GPUs" are the same physical card taking turns, not 8 real cards.)
 # Apply: kubectl apply -f deploy/00-gpu-plugin.yaml
+#
+# A ConfigMap stores config/files in the cluster so they live outside the container image.
+# Here it holds the plugin's config (advertise the GPU as 8 slices). kube-system is the
+# built-in namespace for cluster infrastructure.
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: nvidia-plugin-config, namespace: kube-system}
@@ -14,6 +37,9 @@ data:
           - name: nvidia.com/gpu
             replicas: 8
 ---
+# A DaemonSet runs exactly one copy of its Pod on every node. Node-level agents use this.
+# Here it's NVIDIA's device plugin: the piece that tells the kubelet (the agent on each node
+# that actually starts containers) "this node has GPUs", so Pods can request nvidia.com/gpu.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata: {name: nvidia-device-plugin-daemonset, namespace: kube-system}

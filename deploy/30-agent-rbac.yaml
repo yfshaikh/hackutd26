@@ -4,6 +4,13 @@
 #                     exactly the verbs the five containment tools need, nothing more.
 # The backend mints short-lived tokens for these via the TokenRequest API (k8s.py); it
 # never stores or prints them. Apply: kubectl apply -f deploy/30-agent-rbac.yaml
+#
+# RBAC refresher (see 10-lawfirm.yaml for the basics). Two scopes of permission:
+#   Role + RoleBinding              -> permissions in ONE namespace.
+#   ClusterRole + ClusterRoleBinding -> permissions ACROSS the whole cluster.
+# The read-only agent uses a ClusterRole (read anywhere), the executor a namespaced Role
+# (act only in lawfirm) plus one tiny ClusterRole for the cluster-scoped "cordon node" action.
+# This is the opposite of the notebook's mistake: give out only the exact verbs needed.
 ---
 apiVersion: v1
 kind: ServiceAccount

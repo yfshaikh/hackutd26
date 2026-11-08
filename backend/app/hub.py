@@ -1,5 +1,14 @@
 """In-memory state store + Server-Sent-Events hub.
 
+This is the backend's memory. There's no database: the whole demo's state (cluster snapshot,
+timeline, assets, incident record, approvals, attack-step progress) lives in one `Store`
+object in RAM, and is lost on restart — which is fine for a hackathon demo.
+
+"Server-Sent Events" (SSE) is a simple one-way stream: the browser opens a long-lived HTTP
+connection and the server pushes text lines down it as things happen. That's how the console
+and attacker app update live — every time the Store changes, it publish()es an event to every
+open connection, instead of the browser having to poll.
+
 Single-process, asyncio. All mutations run on the event loop thread (blocking
 k8s calls are pushed to threads but their results are applied back here), so
 publishing is a plain, non-locking fan-out to subscriber queues.
@@ -26,6 +35,12 @@ from .models import (
 GPU_HISTORY_LEN = 90  # ~3 min at one sample / 2 s
 
 
+# --- Attack step state machine --------------------------------------------
+# The five steps form a chain: only "gain-access" starts "ready"; the rest are
+# "locked". Running a step flips the next one to "ready" (see attacks.py, which
+# calls store.set_attack_status(next, "ready")). The UI greys out locked steps,
+# so the attacker must walk the chain in order: access -> miner -> weights ->
+# persistence -> ddos.
 def _default_attack_steps() -> list[AttackStep]:
     return [
         AttackStep(
@@ -62,13 +77,18 @@ def _default_attack_steps() -> list[AttackStep]:
 
 
 class Store:
+    """The single in-memory source of truth for the command center. Everything the
+    console shows (timeline, assets/scope, approvals, incident record, attack steps,
+    cluster snapshot) lives here. Every mutator also publish()es an SSE event so open
+    consoles update live. One instance (`store` at the bottom) is shared process-wide."""
+
     def __init__(self) -> None:
-        self.timeline: list[TimelineEntry] = []
-        self.assets: dict[str, Asset] = {}
-        self.approvals: dict[str, Approval] = {}
-        self.record: Optional[IncidentRecord] = None
+        self.timeline: list[TimelineEntry] = []        # the incident feed (attack/agent/human/system)
+        self.assets: dict[str, Asset] = {}             # protected assets + their scope status
+        self.approvals: dict[str, Approval] = {}       # human-approval requests the agent raised
+        self.record: Optional[IncidentRecord] = None   # the NIST incident record (None until one opens)
         self.attack: dict[str, AttackStep] = {s.id: s for s in _default_attack_steps()}
-        self.cluster: Optional[Cluster] = None
+        self.cluster: Optional[Cluster] = None         # last cluster snapshot (nodes/pods/GPU)
         self.gpu_history: deque[float] = deque(maxlen=GPU_HISTORY_LEN)
         self._subs: set[asyncio.Queue] = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -94,13 +114,17 @@ class Store:
                 pass
 
     def publish(self, event: dict[str, Any]) -> None:
-        """Fan out an event to all SSE subscribers (thread-safe)."""
+        """Fan out an event to all SSE subscribers (thread-safe).
+
+        Mutators may run on a worker thread (blocking k8s calls go through
+        asyncio.to_thread), so when we're off the loop we hand the fan-out back to
+        it with call_soon_threadsafe — asyncio.Queue is not thread-safe."""
         loop = self._loop
         if loop and loop.is_running():
             try:
-                asyncio.get_running_loop()
+                asyncio.get_running_loop()   # on the loop thread? fan out directly
                 self._fanout(event)
-            except RuntimeError:
+            except RuntimeError:             # on a worker thread → marshal onto the loop
                 loop.call_soon_threadsafe(self._fanout, event)
         else:
             self._fanout(event)
@@ -188,6 +212,8 @@ class Store:
         self.publish({"type": "cluster", "cluster": cluster.model_dump(exclude_none=True)})
 
     def set_attack_status(self, step_id: str, status: str) -> None:
+        # Drives the state machine: "locked" -> "ready" -> "running" -> "done".
+        # attacks.py flips the next step to "ready" as each one finishes.
         if step_id in self.attack:
             self.attack[step_id].status = status
 
@@ -197,6 +223,9 @@ class Store:
         )
 
     def reset_incident_state(self) -> None:
+        # Wipe the incident back to a blank slate and relock the attack chain.
+        # NOTE: this empties assets; callers that want scope back must re-seed it
+        # (cluster.seed_assets() + upsert_asset), since this does not.
         self.timeline.clear()
         self.assets.clear()
         self.approvals.clear()
